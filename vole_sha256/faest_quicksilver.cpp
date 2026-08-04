@@ -12,9 +12,8 @@ extern "C" {
 namespace vole_sha256 {
 namespace {
 
-constexpr std::size_t committed_tag_rows = vole_witness_bits + 2 * lambda_bits;
-
-std::vector<bf128_t> columns_to_rows(const std::vector<std::uint8_t*>& columns) {
+std::vector<bf128_t> columns_to_rows(const std::vector<std::uint8_t*>& columns,
+                                    std::size_t committed_tag_rows) {
   assert(columns.size() == lambda_bits);
   std::vector<bf128_t> rows(committed_tag_rows);
   for (std::size_t row = 0; row != rows.size(); ++row) {
@@ -81,8 +80,7 @@ void hash_prover_constraints(const faest::sha256_circuit::Circuit& circuit,
       break;
     case faest::sha256_circuit::Op::And: {
       wires[i].value = witness.multiplication_outputs[multiplication_index] != 0;
-      wires[i].tag = witness_tags[faest::sha256_circuit::secret_message_bits +
-                                  multiplication_index];
+      wires[i].tag = witness_tags[circuit.secret_input_bits() + multiplication_index];
 
       const auto& x = wires[node.lhs];
       const auto& y = wires[node.rhs];
@@ -99,8 +97,13 @@ void hash_prover_constraints(const faest::sha256_circuit::Circuit& circuit,
     }
   }
 
-  assert(input_index == faest::sha256_circuit::secret_message_bits);
-  assert(multiplication_index == multiplication_bits);
+  assert(input_index == circuit.secret_input_bits());
+  assert(multiplication_index == circuit.statistics().multiplication_gates);
+
+  const auto layout = witness_layout(circuit);
+  for (std::size_t bit = layout.logical_bits; bit != layout.vole_bits; ++bit) {
+    zk_hash_128_3_update(hasher, &zero, &witness_tags[bit], &zero);
+  }
 
   // Lift output+public_bit=0 by X: coefficients (0, tag, residual).
   for (std::size_t bit = 0; bit != circuit.output_wires().size(); ++bit) {
@@ -108,6 +111,7 @@ void hash_prover_constraints(const faest::sha256_circuit::Circuit& circuit,
     (void)digest; // residual is deliberately omitted from the proof.
     zk_hash_128_3_update(hasher, &zero, &output.tag, &zero);
   }
+
 }
 
 void hash_verifier_constraints(const faest::sha256_circuit::Circuit& circuit,
@@ -132,8 +136,7 @@ void hash_verifier_constraints(const faest::sha256_circuit::Circuit& circuit,
       wires[i].key = add(wires[node.lhs].key, wires[node.rhs].key);
       break;
     case faest::sha256_circuit::Op::And: {
-      wires[i].key = witness_keys[faest::sha256_circuit::secret_message_bits +
-                                  multiplication_index];
+      wires[i].key = witness_keys[circuit.secret_input_bits() + multiplication_index];
       bf128_t evaluation = multiply(wires[node.lhs].key, wires[node.rhs].key);
       bf128_t delta_z = multiply(delta, wires[i].key);
       bf128_add_inplace(&evaluation, &delta_z);
@@ -142,6 +145,12 @@ void hash_verifier_constraints(const faest::sha256_circuit::Circuit& circuit,
       break;
     }
     }
+  }
+
+  const auto layout = witness_layout(circuit);
+  for (std::size_t bit = layout.logical_bits; bit != layout.vole_bits; ++bit) {
+    auto evaluation = multiply(delta, witness_keys[bit]);
+    zk_hash_128_update(hasher, &evaluation);
   }
 
   for (std::size_t bit = 0; bit != circuit.output_wires().size(); ++bit) {
@@ -158,17 +167,18 @@ QuicksilverProof sha256_quicksilver_prove(
     const std::vector<std::uint8_t*>& v_columns, const std::uint8_t* u_after_witness,
     const faest::sha256_circuit::Digest& public_digest,
     const QuicksilverChallenge& challenge_2) {
-  const auto witness = unpack_witness(packed_witness);
-  auto witness_tags = columns_to_rows(v_columns);
+  const auto layout = witness_layout(circuit);
+  const auto witness = unpack_witness(circuit, packed_witness);
+  auto witness_tags = columns_to_rows(v_columns, layout.vole_bits + 2 * lambda_bits);
 
   bf128_t u_star_0;
   bf128_sum_poly_bits(&u_star_0, u_after_witness);
   bf128_t u_star_1;
   bf128_sum_poly_bits(&u_star_1, u_after_witness + lambda_bytes);
   bf128_t v_star_0;
-  bf128_sum_poly(&v_star_0, witness_tags.data() + vole_witness_bits);
+  bf128_sum_poly(&v_star_0, witness_tags.data() + layout.vole_bits);
   bf128_t v_star_1;
-  bf128_sum_poly(&v_star_1, witness_tags.data() + vole_witness_bits + lambda_bits);
+  bf128_sum_poly(&v_star_1, witness_tags.data() + layout.vole_bits + lambda_bits);
 
   zk_hash_128_3_ctx hasher;
   zk_hash_128_3_init(&hasher, challenge_2.data());
@@ -190,16 +200,17 @@ std::array<std::uint8_t, lambda_bytes> sha256_quicksilver_verify(
   bf128_t delta;
   bf128_load(&delta, delta_bytes.data());
   const bf128_t delta_squared = multiply(delta, delta);
-  auto witness_keys = columns_to_rows(q_columns);
+  const auto layout = witness_layout(circuit);
+  auto witness_keys = columns_to_rows(q_columns, layout.vole_bits + 2 * lambda_bits);
 
   bf128_t q_star;
-  bf128_sum_poly(&q_star, witness_keys.data() + vole_witness_bits);
+  bf128_sum_poly(&q_star, witness_keys.data() + layout.vole_bits);
   bf128_t tmp;
-  bf128_sum_poly(&tmp, witness_keys.data() + vole_witness_bits + lambda_bits);
+  bf128_sum_poly(&tmp, witness_keys.data() + layout.vole_bits + lambda_bits);
   tmp = multiply(tmp, delta);
   bf128_add_inplace(&q_star, &tmp);
 
-  for (std::size_t i = 0; i != vole_witness_bits; ++i) {
+  for (std::size_t i = 0; i != layout.vole_bits; ++i) {
     if (ptr_get_bit(masked_witness_d.data(), i)) bf128_add_inplace(&witness_keys[i], &delta);
   }
 

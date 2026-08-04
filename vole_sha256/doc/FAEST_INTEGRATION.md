@@ -2,21 +2,23 @@
 
 ## Parameters
 
-The prototype uses the FAEST-128s VOLE/BAVC parameters with a SHA-256-specific
-witness length:
+The prototype uses FAEST-128s VOLE/BAVC parameters with a public-length-derived
+SHA-256 witness length:
 
 ```text
 lambda            128 bits
-ell             39,648 bits
-ell_hat         40,048 bits
-ell_hat bytes    5,006 bytes
+ell             round_up_8(message_bits + actual AND gates)
+ell_hat         ell + 400 bits
+ell_hat bytes   ceil(ell_hat / 8)
 tau                 11
 w_grind               7
 ```
 
 The parent FAEST source is not modified.  `faest_vole.cpp` copies the public
-FAEST-128s parameter structure and changes only `ell` before calling the
-official VOLE and BAVC functions.
+FAEST-128s parameter structure and passes the extended length explicitly to
+the official VOLE functions. The upstream ABI stores `l` in 16 bits, but the
+VOLE entry points used here accept `ell_hat` as an independent unsigned value
+and do not consult that field; the parent source remains unchanged.
 
 ## Prover
 
@@ -25,7 +27,7 @@ one GF(2^128) tag per committed witness bit.  Circuit wires are evaluated as:
 
 ```text
 secret input tag = V row [input index]
-AND output tag   = V row [440 + AND index]
+AND output tag   = V row [message_bits + AND index]
 XOR tag          = XOR of input tags
 constant tag     = zero
 ```
@@ -44,7 +46,8 @@ The verifier converts reconstructed `Q` to row keys and applies
 key[i] = Q[i] + Delta*d[i]
 ```
 
-for all 39,648 committed bits.  It evaluates each multiplication constraint
+for all dynamically committed bits. It constrains only byte-rounding transport
+padding to zero, then evaluates each multiplication constraint
 as
 
 ```text

@@ -62,6 +62,16 @@ template<class Array> Array fixed_hex(std::string_view text, std::string_view na
   return result;
 }
 
+std::pair<Message, std::size_t> message_hex(std::string_view text) {
+  const auto bytes = from_hex(text);
+  if (bytes.size() > faest::sha256_circuit::max_message_bytes) {
+    throw std::invalid_argument("message exceeds 550 bytes");
+  }
+  Message result{};
+  std::copy(bytes.begin(), bytes.end(), result.begin());
+  return {result, bytes.size()};
+}
+
 std::vector<std::uint8_t> read_file(const std::string& path) {
   std::ifstream input(path, std::ios::binary);
   if (!input) throw std::runtime_error("cannot open input file: " + path);
@@ -139,21 +149,22 @@ void usage() {
       << "Usage:\n"
       << "  vole-sha256 prove --message-hex HEX --proof FILE [--context TEXT] "
          "[--randomness-hex HEX]\n"
-      << "  vole-sha256 verify --digest-hex HEX --proof FILE [--context TEXT]\n"
-      << "  vole-sha256 inspect --proof FILE\n"
+      << "  vole-sha256 verify --digest-hex HEX --message-length BYTES --proof FILE [--context TEXT]\n"
+      << "  vole-sha256 inspect --message-length BYTES --proof FILE\n"
       << "  vole-sha256 benchmark [--iterations N] [--message-hex HEX] [--context TEXT] "
-         "[--random-messages true] [--print-samples true]\n";
+         "[--message-bytes N] [--random-messages true] [--print-samples true]\n";
 }
 
 int command_prove(const std::map<std::string, std::string>& opts) {
-  const auto message = fixed_hex<Message>(required(opts, "--message-hex"), "message");
+  const auto [message, message_length] = message_hex(required(opts, "--message-hex"));
   const auto context = context_bytes(opts);
   const auto rho = randomness(opts);
-  const Circuit circuit;
+  const Circuit circuit(message_length);
   const auto digest = circuit.evaluate(message);
   const auto proof = vole_sha256::prove(circuit, message, digest, context, rho);
   write_file(required(opts, "--proof"), proof);
   std::cout << "digest=" << to_hex(digest) << '\n'
+            << "message_length=" << message_length << '\n'
             << "proof_bytes=" << proof.size() << '\n'
             << "proof_sha256=" << to_hex(sha256(proof)) << '\n';
   return 0;
@@ -163,7 +174,8 @@ int command_verify(const std::map<std::string, std::string>& opts) {
   const auto digest = fixed_hex<Digest>(required(opts, "--digest-hex"), "digest");
   const auto context = context_bytes(opts);
   const auto proof = read_file(required(opts, "--proof"));
-  const Circuit circuit;
+  const auto message_length = std::stoul(required(opts, "--message-length"));
+  const Circuit circuit(message_length);
   const bool accepted = vole_sha256::verify(circuit, digest, context, proof);
   std::cout << (accepted ? "VALID" : "INVALID") << '\n';
   return accepted ? 0 : 1;
@@ -171,25 +183,40 @@ int command_verify(const std::map<std::string, std::string>& opts) {
 
 int command_inspect(const std::map<std::string, std::string>& opts) {
   const auto proof = read_file(required(opts, "--proof"));
+  const Circuit circuit(std::stoul(required(opts, "--message-length")));
+  const auto expected_size = vole_sha256::serialized_proof_bytes(circuit);
   std::cout << "proof_bytes=" << proof.size() << '\n'
-            << "expected_bytes=" << vole_sha256::serialized_proof_bytes << '\n'
+            << "expected_bytes=" << expected_size << '\n'
             << "proof_sha256=" << to_hex(sha256(proof)) << '\n';
-  if (proof.size() == vole_sha256::serialized_proof_bytes) {
-    const std::span<const std::uint8_t> challenge(proof.data() + 57234, 16);
-    const std::uint32_t counter = static_cast<std::uint32_t>(proof[57266]) |
-                                  (static_cast<std::uint32_t>(proof[57267]) << 8) |
-                                  (static_cast<std::uint32_t>(proof[57268]) << 16) |
-                                  (static_cast<std::uint32_t>(proof[57269]) << 24);
+  if (proof.size() == expected_size) {
+    const std::size_t challenge_offset = expected_size - 36;
+    const std::size_t counter_offset = expected_size - 4;
+    const std::span<const std::uint8_t> challenge(proof.data() + challenge_offset, 16);
+    const std::uint32_t counter = static_cast<std::uint32_t>(proof[counter_offset]) |
+                                  (static_cast<std::uint32_t>(proof[counter_offset + 1]) << 8) |
+                                  (static_cast<std::uint32_t>(proof[counter_offset + 2]) << 16) |
+                                  (static_cast<std::uint32_t>(proof[counter_offset + 3]) << 24);
     std::cout << "challenge_3=" << to_hex(challenge) << '\n' << "counter=" << counter << '\n';
   }
-  return proof.size() == vole_sha256::serialized_proof_bytes ? 0 : 1;
+  return proof.size() == expected_size ? 0 : 1;
 }
 
 int command_benchmark(const std::map<std::string, std::string>& opts) {
   Message message{};
+  std::size_t message_length = 55;
   const auto message_option = opts.find("--message-hex");
-  if (message_option != opts.end()) message = fixed_hex<Message>(message_option->second, "message");
-  else for (std::size_t i = 0; i != message.size(); ++i) message[i] = static_cast<std::uint8_t>(i);
+  if (message_option != opts.end()) {
+    const auto parsed = message_hex(message_option->second);
+    message = parsed.first;
+    message_length = parsed.second;
+  } else {
+    const auto length_option = opts.find("--message-bytes");
+    if (length_option != opts.end()) message_length = std::stoul(length_option->second);
+    if (message_length > faest::sha256_circuit::max_message_bytes) {
+      throw std::invalid_argument("--message-bytes exceeds 550");
+    }
+    for (std::size_t i = 0; i != message_length; ++i) message[i] = static_cast<std::uint8_t>(i);
+  }
   const bool random_messages = opts.contains("--random-messages") &&
                                opts.at("--random-messages") != "false";
   const bool print_samples = opts.contains("--print-samples") &&
@@ -205,22 +232,23 @@ int command_benchmark(const std::map<std::string, std::string>& opts) {
   if (iterations == 0) throw std::invalid_argument("iterations must be positive");
 
   const auto circuit_start = std::chrono::steady_clock::now();
-  const Circuit circuit;
+  const Circuit circuit(message_length);
   const auto circuit_end = std::chrono::steady_clock::now();
 
   double prove_ms = 0;
   double verify_ms = 0;
   double witness_ms = 0;
   std::size_t proof_size = 0;
+  const auto layout = vole_sha256::witness_layout(circuit);
   for (unsigned int i = 0; i != iterations; ++i) {
     if (random_messages) {
       static constexpr std::string_view alphabet =
           "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      std::array<std::uint8_t, Message{}.size()> random_bytes{};
-      if (RAND_bytes(random_bytes.data(), random_bytes.size()) != 1) {
+      std::array<std::uint8_t, faest::sha256_circuit::max_message_bytes> random_bytes{};
+      if (RAND_bytes(random_bytes.data(), message_length) != 1) {
         throw std::runtime_error("OpenSSL RAND_bytes failed");
       }
-      for (std::size_t j = 0; j != message.size(); ++j) {
+      for (std::size_t j = 0; j != message_length; ++j) {
         message[j] = static_cast<std::uint8_t>(alphabet[random_bytes[j] % alphabet.size()]);
       }
     }
@@ -255,8 +283,8 @@ int command_benchmark(const std::map<std::string, std::string>& opts) {
     if (print_samples) {
       std::cout << "\n[sample " << i + 1 << '/' << iterations << "]\n"
                 << "secret_input_ascii="
-                << std::string(message.begin(), message.end()) << '\n'
-                << "secret_input_hex=" << to_hex(message) << '\n'
+                << std::string(message.begin(), message.begin() + static_cast<std::ptrdiff_t>(message_length)) << '\n'
+                << "secret_input_hex=" << to_hex(std::span(message.data(), message_length)) << '\n'
                 << "public_sha256=" << to_hex(digest) << '\n'
                 << "prover_time_ms=" << sample_prove_ms << '\n'
                 << "verifier_time_ms=" << sample_verify_ms << '\n'
@@ -268,9 +296,11 @@ int command_benchmark(const std::map<std::string, std::string>& opts) {
   std::cout << "\n[summary]\n"
             << "iterations=" << iterations << '\n'
             << "random_messages=" << (random_messages ? "true" : "false") << '\n'
+            << "message_length=" << message_length << '\n'
+            << "sha256_blocks=" << circuit.block_count() << '\n'
             << "multiplication_gates=" << circuit.statistics().multiplication_gates << '\n'
-            << "logical_witness_bits=" << vole_sha256::logical_witness_bits << '\n'
-            << "vole_witness_bytes=" << vole_sha256::vole_witness_bytes << '\n'
+            << "logical_witness_bits=" << layout.logical_bits << '\n'
+            << "vole_witness_bytes=" << layout.vole_bytes << '\n'
             << "proof_bytes=" << proof_size << '\n'
             << "circuit_build_ms=" << millis(circuit_end - circuit_start) << '\n'
             << "witness_generation_mean_ms=" << witness_ms / iterations << '\n'

@@ -1,13 +1,14 @@
-# One-block SHA-256 binary circuit
+# Generic bounded SHA-256 binary circuit
 
 This circuit proves the relation
 
 ```text
-SHA256(secret_message[55]) == public_digest[32]
+SHA256(secret_message[0:public_length]) == public_digest[32]
 ```
 
-for an exactly 55-byte secret message.  The unique one-block SHA-256 padding
-is public and built into the circuit:
+for a public length between 0 and 550 bytes and a secret message. Standard
+padding and the 64-bit length field are built into the circuit. The number of
+compression blocks is `ceil((8*length+65)/512)`, hence at most nine.
 
 ```text
 secret_message (440 bits) || 0x80 || 0x00000000000001b8
@@ -41,10 +42,11 @@ Constant propagation removes ANDs with zero/one and repeated inputs.
 
 ## Exact size
 
-For this fixed 55-byte relation the generated circuit contains exactly
-**39,201 AND gates**.  Its VOLE extended witness consists of 440 secret input
-bits followed by 39,201 AND-output bits, for 39,641 bits total (4,956 bytes
-when packed and rounded up).
+The 55-byte compatibility circuit has exactly **39,201 AND gates** and commits
+440 input bits, producing 39,641 logical witness bits. The 550-byte maximum
+circuit has **363,795 AND gates** and commits 4,400 input bits, producing
+368,195 logical witness bits. Each proof rounds only its own logical witness
+length to a byte boundary.
 
 ```text
 message schedule:   8,362 AND gates
@@ -54,6 +56,5 @@ final feed-forward:   236 AND gates
 total:             39,201 AND gates
 ```
 
-The exact gate count is computed from the generated circuit and protected by
-a regression test.  Three independent SHA-256 vectors test the complete
-padding, schedule, compression, feed-forward and endian conversion path.
+Regression tests compare 0, 1, 55, 56, 64, 119, 120 and 550-byte circuits to
+OpenSSL, covering padding boundaries and maximum nine-block chaining.

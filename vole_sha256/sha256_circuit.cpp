@@ -3,6 +3,7 @@
 #include "sha256_circuit.hpp"
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace faest::sha256_circuit {
 namespace {
@@ -112,7 +113,11 @@ private:
   Circuit& circuit_;
 };
 
-Circuit::Circuit() {
+Circuit::Circuit(std::size_t message_length) : message_length_(message_length) {
+  if (message_length > max_message_bytes) {
+    throw std::invalid_argument("SHA-256 message exceeds the 550-byte circuit limit");
+  }
+  block_count_ = (message_length * 8 + 1 + 64 + 511) / 512;
   // Wire IDs 0 and 1 are canonical public constants.  Constant propagation in
   // xor_wire/and_wire removes gates whose result is already public.
   nodes_.push_back({Op::Constant, 0, 0, false});
@@ -126,68 +131,82 @@ Circuit::Circuit() {
 
   // Secret bytes are supplied in ordinary byte order.  SHA-256 parses each
   // group of four bytes as a big-endian word; Word itself stores LSB first.
-  std::array<std::array<Wire, 8>, secret_message_bytes> message{};
-  for (auto& byte : message) {
-    for (std::size_t bit = 0; bit != 8; ++bit) byte[bit] = b.input();
-  }
-
-  std::array<std::array<Wire, 8>, 64> block{};
-  for (std::size_t byte = 0; byte != secret_message_bytes; ++byte) block[byte] = message[byte];
-  block[55][7] = b.one(); // SHA-256's first padding bit: byte 0x80.
-  // bytes 56..62 are zero; the 440-bit big-endian length is 0x00000000000001b8.
-  block[62][0] = b.one();
-  block[63][3] = b.one();
-  block[63][4] = b.one();
-  block[63][5] = b.one();
-  block[63][7] = b.one();
-
-  std::array<Word, 64> schedule{};
-  for (std::size_t word = 0; word != 16; ++word) {
-    for (std::size_t byte = 0; byte != 4; ++byte) {
-      for (std::size_t bit = 0; bit != 8; ++bit) {
-        schedule[word][24 - 8 * byte + bit] = block[4 * word + byte][bit];
-      }
+  std::vector<std::array<Wire, 8>> message(message_length);
+  inputs_.reserve(message_length * 8);
+  for (std::size_t byte = 0; byte != message.size(); ++byte) {
+    for (std::size_t bit = 0; bit != 8; ++bit) {
+      message[byte][bit] = b.input();
+      inputs_.push_back(message[byte][bit]);
     }
   }
-  for (std::size_t t = 16; t != 64; ++t) {
-    auto value = b.add(b.small_sigma1(schedule[t - 2]), schedule[t - 7]);
-    value = b.add(value, b.small_sigma0(schedule[t - 15]));
-    schedule[t] = b.add(value, schedule[t - 16]);
+
+  std::array<Word, 8> chaining{};
+  for (std::size_t i = 0; i != 8; ++i) chaining[i] = b.constant_word(initial_state[i]);
+  const std::uint64_t bit_length = static_cast<std::uint64_t>(message_length) * 8;
+
+  for (std::size_t block_index = 0; block_index != block_count_; ++block_index) {
+    std::array<std::array<Wire, 8>, 64> block{};
+    for (std::size_t offset = 0; offset != 64; ++offset) {
+      const std::size_t absolute = block_index * 64 + offset;
+      if (absolute < message_length) {
+        block[offset] = message[absolute];
+      } else if (absolute == message_length) {
+        block[offset][7] = b.one();
+      } else if (absolute >= block_count_ * 64 - 8) {
+        const std::size_t length_byte = absolute - (block_count_ * 64 - 8);
+        const auto value = static_cast<std::uint8_t>(bit_length >> (8 * (7 - length_byte)));
+        for (std::size_t bit = 0; bit != 8; ++bit) {
+          block[offset][bit] = ((value >> bit) & 1U) ? b.one() : b.zero();
+        }
+      }
+    }
+
+    const auto schedule_before = multiplication_count();
+    std::array<Word, 64> schedule{};
+    for (std::size_t word = 0; word != 16; ++word) {
+      for (std::size_t byte = 0; byte != 4; ++byte) {
+        for (std::size_t bit = 0; bit != 8; ++bit) {
+          schedule[word][24 - 8 * byte + bit] = block[4 * word + byte][bit];
+        }
+      }
+    }
+    for (std::size_t t = 16; t != 64; ++t) {
+      auto value = b.add(b.small_sigma1(schedule[t - 2]), schedule[t - 7]);
+      value = b.add(value, b.small_sigma0(schedule[t - 15]));
+      schedule[t] = b.add(value, schedule[t - 16]);
+    }
+    statistics_.schedule_multiplications += multiplication_count() - schedule_before;
+
+    const auto round_before = multiplication_count();
+    auto state = chaining;
+    for (std::size_t t = 0; t != 64; ++t) {
+      auto t1 = b.add(state[7], b.big_sigma1(state[4]));
+      t1 = b.add(t1, b.choice(state[4], state[5], state[6]));
+      t1 = b.add(t1, schedule[t]);
+      t1 = b.add(t1, b.constant_word(round_constants[t]));
+      const auto t2 = b.add(b.big_sigma0(state[0]), b.majority(state[0], state[1], state[2]));
+      const auto new_a = b.add(t1, t2);
+      const auto new_e = b.add(state[3], t1);
+      state = {new_a, state[0], state[1], state[2], new_e, state[4], state[5], state[6]};
+    }
+    statistics_.round_multiplications += multiplication_count() - round_before;
+
+    const auto feed_before = multiplication_count();
+    for (std::size_t i = 0; i != 8; ++i) state[i] = b.add(state[i], chaining[i]);
+    statistics_.feed_forward_multiplications += multiplication_count() - feed_before;
+    chaining = state;
   }
-  statistics_.schedule_multiplications = multiplication_count();
-
-  std::array<Word, 8> initial{};
-  for (std::size_t i = 0; i != 8; ++i) initial[i] = b.constant_word(initial_state[i]);
-  auto state = initial;
-
-  for (std::size_t t = 0; t != 64; ++t) {
-    auto t1 = b.add(state[7], b.big_sigma1(state[4]));
-    t1 = b.add(t1, b.choice(state[4], state[5], state[6]));
-    t1 = b.add(t1, schedule[t]);
-    t1 = b.add(t1, b.constant_word(round_constants[t]));
-    const auto t2 = b.add(b.big_sigma0(state[0]), b.majority(state[0], state[1], state[2]));
-
-    const auto new_a = b.add(t1, t2);
-    const auto new_e = b.add(state[3], t1);
-    state = {new_a, state[0], state[1], state[2], new_e, state[4], state[5], state[6]};
-  }
-  const auto after_rounds = multiplication_count();
-  statistics_.round_multiplications = after_rounds - statistics_.schedule_multiplications;
-
-  for (std::size_t i = 0; i != 8; ++i) state[i] = b.add(state[i], initial[i]);
-  const auto after_feed_forward = multiplication_count();
-  statistics_.feed_forward_multiplications = after_feed_forward - after_rounds;
 
   // Public SHA-256 digest bytes are big-endian.
   for (std::size_t word = 0; word != 8; ++word) {
     for (std::size_t byte = 0; byte != 4; ++byte) {
       for (std::size_t bit = 0; bit != 8; ++bit) {
-        outputs_[(4 * word + byte) * 8 + bit] = state[word][24 - 8 * byte + bit];
+        outputs_[(4 * word + byte) * 8 + bit] = chaining[word][24 - 8 * byte + bit];
       }
     }
   }
 
-  statistics_.secret_inputs = secret_message_bits;
+  statistics_.secret_inputs = secret_input_bits();
   statistics_.total_nodes = nodes_.size();
   statistics_.xor_gates = std::count_if(nodes_.begin(), nodes_.end(),
                                         [](const Node& n) { return n.op == Op::Xor; });
@@ -265,6 +284,8 @@ std::vector<std::uint8_t> Circuit::multiplication_witness(const Message& message
 }
 
 bool Circuit::verify_statement(const Message& message, const Digest& claimed_digest) const {
+  if (std::any_of(message.begin() + static_cast<std::ptrdiff_t>(message_length_), message.end(),
+                  [](std::uint8_t byte) { return byte != 0; })) return false;
   return evaluate(message) == claimed_digest;
 }
 

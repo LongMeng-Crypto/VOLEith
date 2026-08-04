@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: MIT
  *
- * A Boolean (XOR/AND) circuit for one-block SHA-256.  XOR, NOT, shifts and
+ * A Boolean (XOR/AND) circuit for bounded multi-block SHA-256. XOR, NOT, shifts and
  * rotations are linear over F_2; only AND nodes are multiplication gates.
  */
 #ifndef SHA256_CIRCUIT_HPP
@@ -16,8 +16,8 @@ namespace faest::sha256_circuit {
 
 class CircuitBuilder;
 
-constexpr std::size_t secret_message_bytes = 55;
-constexpr std::size_t secret_message_bits  = secret_message_bytes * 8;
+constexpr std::size_t max_message_bytes    = 550;
+constexpr std::size_t secret_message_bytes = max_message_bytes;
 constexpr std::size_t digest_bytes         = 32;
 
 using Message = std::array<std::uint8_t, secret_message_bytes>;
@@ -44,9 +44,9 @@ struct Statistics {
 
 class Circuit {
 public:
-  Circuit();
+  explicit Circuit(std::size_t message_length = 55);
 
-  // Evaluate all 256 public output wires for a 55-byte secret message.
+  // Evaluate all 256 public output wires for the public message_length prefix.
   Digest evaluate(const Message& message) const;
 
   // Values of the AND outputs, in circuit order.  Together with the 440
@@ -57,14 +57,21 @@ public:
   bool verify_statement(const Message& message, const Digest& claimed_digest) const;
 
   const Statistics& statistics() const { return statistics_; }
+  std::size_t message_length() const { return message_length_; }
+  std::size_t secret_input_bits() const { return message_length_ * 8; }
+  std::size_t block_count() const { return block_count_; }
   const std::vector<Node>& nodes() const { return nodes_; }
   const std::array<std::uint32_t, 256>& output_wires() const { return outputs_; }
+  const std::vector<std::uint32_t>& input_wires() const { return inputs_; }
 
 private:
   friend class CircuitBuilder;
   std::vector<Node> nodes_;
   std::array<std::uint32_t, 256> outputs_{};
+  std::vector<std::uint32_t> inputs_;
   Statistics statistics_{};
+  std::size_t message_length_ = 0;
+  std::size_t block_count_ = 0;
 
   std::uint32_t secret_input();
   std::uint32_t xor_wire(std::uint32_t lhs, std::uint32_t rhs);

@@ -14,7 +14,7 @@ namespace vole_sha256 {
 
 using ProverRandomness = std::array<std::uint8_t, 32>;
 
-constexpr std::size_t serialized_proof_bytes = 57270;
+std::size_t serialized_proof_bytes(const faest::sha256_circuit::Circuit& circuit);
 
 std::vector<std::uint8_t> prove(
     const faest::sha256_circuit::Circuit& circuit,

@@ -1,4 +1,4 @@
-# Release benchmark baseline
+# Historical one-block release benchmark baseline
 
 The benchmark was run on 2026-08-04 from a Meson `release` build, linked to an
 unmodified FAEST `release` static library.  Ten complete, independently seeded
@@ -32,17 +32,19 @@ build-release/vole-sha256 benchmark --iterations 10 \
   --context benchmark-v1
 ```
 
-Timings will vary with CPU, compiler, enabled FAEST backend and system load.
+Dynamic generic v2 retains the same 55-byte witness capacity and proof size,
+although its transcript domain and KAT bytes differ. Timings vary with CPU,
+compiler, backend and system load.
 
 ## Random-message end-to-end benchmark
 
 `scripts/benchmark_random.py` asks the C++ benchmark process to generate a new
-random 55-character ASCII secret for every sample.  It prints the secret in
+random ASCII secret of the selected length for every sample. It prints the secret in
 ASCII and hex, the public SHA-256 digest, the prover/verifier timings and the
 serialized proof size.  Every generated proof is required to verify.
 
 ```sh
-scripts/benchmark_random.py --iterations 10
+scripts/benchmark_random.py --iterations 10 --message-bytes 550
 ```
 
 The script is only a launcher: all samples run inside one C++ process and reuse
@@ -51,3 +53,14 @@ verifier timer surrounds only `verify()`, exactly matching the original C++
 benchmark timing boundaries.  Digest and witness generation, circuit
 construction, process startup and output formatting are excluded.  Circuit
 construction and mean witness-generation time are reported separately.
+
+Dynamic-capacity sanity measurements from the development machine:
+
+```text
+bytes  blocks  AND gates  proof bytes  prover ms  verifier ms
+55        1       39,201       57,270        143          120
+56        2       68,469       97,519        309          268
+550       9      363,795      509,029      1,654        1,480
+```
+
+These short runs demonstrate scaling and are not publication-quality results.

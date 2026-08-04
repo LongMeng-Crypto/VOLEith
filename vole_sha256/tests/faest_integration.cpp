@@ -37,8 +37,8 @@ struct Fixture {
   vole_sha256::ReconstructedVole reconstructed;
 
   Fixture()
-      : commitment(root_key(), iv) {
-    for (std::size_t i = 0; i != message.size(); ++i) {
+      : commitment(root_key(), iv, vole_sha256::witness_layout(circuit).vole_bits) {
+    for (std::size_t i = 0; i != circuit.message_length(); ++i) {
       message[i] = static_cast<std::uint8_t>(3 * i + 1);
     }
     digest = circuit.evaluate(message);
@@ -53,11 +53,12 @@ BOOST_AUTO_TEST_SUITE(vole_sha256_faest_integration)
 
 BOOST_AUTO_TEST_CASE(real_vole_commit_and_reconstruct) {
   Fixture fixture;
+  const auto layout = vole_sha256::witness_layout(fixture.circuit);
+  const auto vole = vole_sha256::vole_layout(layout.vole_bits);
   BOOST_TEST(fixture.commitment.parameters().lambda == 128U);
-  BOOST_TEST(fixture.commitment.parameters().l == 39648U);
-  BOOST_TEST(fixture.commitment.u().size() == vole_sha256::vole_ell_hat_bytes);
+  BOOST_TEST(fixture.commitment.u().size() == vole.ell_hat_bytes);
   BOOST_TEST(fixture.reconstructed.q_storage.size() ==
-             vole_sha256::lambda_bits * vole_sha256::vole_ell_hat_bytes);
+             vole_sha256::lambda_bits * vole.ell_hat_bytes);
   BOOST_TEST(vole_sha256::check_vole_correlation(fixture.commitment, fixture.reconstructed));
 }
 
@@ -67,10 +68,11 @@ BOOST_AUTO_TEST_CASE(real_quicksilver_accepts_sha256_relation) {
   auto q = fixture.reconstructed.columns();
   const auto masked = vole_sha256::mask_witness(fixture.witness, fixture.commitment.u());
   const auto chall2 = challenge_2();
+  const auto layout = vole_sha256::witness_layout(fixture.circuit);
 
   const auto proof = vole_sha256::sha256_quicksilver_prove(
       fixture.circuit, fixture.witness, v,
-      fixture.commitment.u().data() + vole_sha256::vole_witness_bits / 8, fixture.digest, chall2);
+      fixture.commitment.u().data() + layout.vole_bytes, fixture.digest, chall2);
   const auto reconstructed_a0 = vole_sha256::sha256_quicksilver_verify(
       fixture.circuit, masked, q, fixture.reconstructed.challenge, fixture.digest, chall2, proof);
   BOOST_TEST(reconstructed_a0 == proof.a0);
@@ -82,9 +84,10 @@ BOOST_AUTO_TEST_CASE(wrong_public_digest_is_rejected) {
   auto q = fixture.reconstructed.columns();
   const auto masked = vole_sha256::mask_witness(fixture.witness, fixture.commitment.u());
   const auto chall2 = challenge_2();
+  const auto layout = vole_sha256::witness_layout(fixture.circuit);
   const auto proof = vole_sha256::sha256_quicksilver_prove(
       fixture.circuit, fixture.witness, v,
-      fixture.commitment.u().data() + vole_sha256::vole_witness_bits / 8, fixture.digest, chall2);
+      fixture.commitment.u().data() + layout.vole_bytes, fixture.digest, chall2);
 
   auto wrong_digest = fixture.digest;
   wrong_digest[17] ^= 0x08;
@@ -96,16 +99,17 @@ BOOST_AUTO_TEST_CASE(wrong_public_digest_is_rejected) {
 BOOST_AUTO_TEST_CASE(wrong_and_output_is_rejected) {
   Fixture fixture;
   auto bad_witness = fixture.witness;
-  constexpr std::size_t bad_bit = faest::sha256_circuit::secret_message_bits + 10000;
+  const std::size_t bad_bit = fixture.circuit.secret_input_bits() + 10000;
   bad_witness[bad_bit / 8] ^= static_cast<std::uint8_t>(1U << (bad_bit % 8));
 
   auto v = fixture.commitment.v_columns();
   auto q = fixture.reconstructed.columns();
   const auto bad_masked = vole_sha256::mask_witness(bad_witness, fixture.commitment.u());
   const auto chall2 = challenge_2();
+  const auto layout = vole_sha256::witness_layout(fixture.circuit);
   const auto proof = vole_sha256::sha256_quicksilver_prove(
       fixture.circuit, bad_witness, v,
-      fixture.commitment.u().data() + vole_sha256::vole_witness_bits / 8, fixture.digest, chall2);
+      fixture.commitment.u().data() + layout.vole_bytes, fixture.digest, chall2);
   const auto reconstructed_a0 = vole_sha256::sha256_quicksilver_verify(
       fixture.circuit, bad_masked, q, fixture.reconstructed.challenge, fixture.digest, chall2,
       proof);
@@ -118,9 +122,10 @@ BOOST_AUTO_TEST_CASE(tampered_masked_witness_is_rejected) {
   auto q = fixture.reconstructed.columns();
   auto masked = vole_sha256::mask_witness(fixture.witness, fixture.commitment.u());
   const auto chall2 = challenge_2();
+  const auto layout = vole_sha256::witness_layout(fixture.circuit);
   const auto proof = vole_sha256::sha256_quicksilver_prove(
       fixture.circuit, fixture.witness, v,
-      fixture.commitment.u().data() + vole_sha256::vole_witness_bits / 8, fixture.digest, chall2);
+      fixture.commitment.u().data() + layout.vole_bytes, fixture.digest, chall2);
 
   masked[731] ^= 0x40;
   const auto reconstructed_a0 = vole_sha256::sha256_quicksilver_verify(

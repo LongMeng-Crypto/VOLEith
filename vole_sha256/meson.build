@@ -66,4 +66,4 @@ executable(
   cpp_args: ['-Wno-psabi'],
 )
 
-test('VOLE-SHA256', tests)
+test('VOLE-SHA256', tests, timeout: 180)

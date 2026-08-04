@@ -20,8 +20,8 @@ extern "C" {
 namespace vole_sha256 {
 namespace {
 
-constexpr std::array<std::uint8_t, 8> proof_magic = {'V', 'S', 'H', '2', '5', '6', 1, 0};
-constexpr char protocol_domain[] = "VOLE-SHA256-NIZK-v1";
+constexpr std::array<std::uint8_t, 8> proof_magic = {'V', 'S', 'H', '2', '5', '6', 2, 0};
+constexpr char protocol_domain[] = "VOLE-SHA256-GENERIC-NIZK-v2";
 constexpr std::size_t utilde_bytes = lambda_bytes + 2;
 constexpr std::size_t challenge_1_bytes = 5 * lambda_bytes + 8;
 
@@ -43,13 +43,16 @@ void update_domain(H2_context_t* context) {
 }
 
 std::array<std::uint8_t, 2 * lambda_bytes> hash_statement(
-    const faest::sha256_circuit::Digest& digest, std::span<const std::uint8_t> context) {
+    std::size_t message_length, const faest::sha256_circuit::Digest& digest,
+    std::span<const std::uint8_t> context) {
   if (context.size() > std::numeric_limits<std::uint32_t>::max()) {
     throw std::invalid_argument("context is too long");
   }
   H2_context_t hash;
   H2_init(&hash, lambda_bits);
   update_domain(&hash);
+  H2_update_u32_le(&hash, static_cast<std::uint32_t>(faest::sha256_circuit::max_message_bytes));
+  H2_update_u32_le(&hash, static_cast<std::uint32_t>(message_length));
   H2_update(&hash, digest.data(), digest.size());
   H2_update_u32_le(&hash, static_cast<std::uint32_t>(context.size()));
   if (!context.empty()) H2_update(&hash, context.data(), context.size());
@@ -137,9 +140,11 @@ bool grinding_condition(const std::array<std::uint8_t, lambda_bytes>& challenge)
   return true;
 }
 
-std::vector<std::uint8_t> serialize(const ProofFields& fields) {
+std::vector<std::uint8_t> serialize(const faest::sha256_circuit::Circuit& circuit,
+                                    const ProofFields& fields) {
+  const auto expected_size = serialized_proof_bytes(circuit);
   std::vector<std::uint8_t> output;
-  output.reserve(serialized_proof_bytes);
+  output.reserve(expected_size);
   const auto append = [&output](const auto& value) {
     output.insert(output.end(), value.begin(), value.end());
   };
@@ -156,14 +161,17 @@ std::vector<std::uint8_t> serialize(const ProofFields& fields) {
   output.push_back(static_cast<std::uint8_t>(fields.counter >> 8));
   output.push_back(static_cast<std::uint8_t>(fields.counter >> 16));
   output.push_back(static_cast<std::uint8_t>(fields.counter >> 24));
-  if (output.size() != serialized_proof_bytes) {
+  if (output.size() != expected_size) {
     throw std::logic_error("internal proof-size mismatch");
   }
   return output;
 }
 
-bool deserialize(std::span<const std::uint8_t> input, ProofFields& fields) {
-  if (input.size() != serialized_proof_bytes ||
+bool deserialize(const faest::sha256_circuit::Circuit& circuit,
+                 std::span<const std::uint8_t> input, ProofFields& fields) {
+  const auto witness = witness_layout(circuit);
+  const auto vole = vole_layout(witness.vole_bits);
+  if (input.size() != serialized_proof_bytes(circuit) ||
       !std::equal(proof_magic.begin(), proof_magic.end(), input.begin())) {
     return false;
   }
@@ -172,7 +180,8 @@ bool deserialize(std::span<const std::uint8_t> input, ProofFields& fields) {
     std::copy_n(input.begin() + static_cast<std::ptrdiff_t>(offset), value.size(), value.begin());
     offset += value.size();
   };
-  fields.corrections.resize(vole_correction_bytes);
+  fields.corrections.resize(vole.correction_bytes);
+  fields.d.resize(witness.vole_bytes);
   fields.opening.resize(vole_opening_bytes);
   take(fields.corrections);
   take(fields.u_tilde);
@@ -191,6 +200,13 @@ bool deserialize(std::span<const std::uint8_t> input, ProofFields& fields) {
 
 } // namespace
 
+std::size_t serialized_proof_bytes(const faest::sha256_circuit::Circuit& circuit) {
+  const auto witness = witness_layout(circuit);
+  const auto vole = vole_layout(witness.vole_bits);
+  return proof_magic.size() + vole.correction_bytes + utilde_bytes + witness.vole_bytes +
+         2 * lambda_bytes + vole_opening_bytes + lambda_bytes + 16 + 4;
+}
+
 std::vector<std::uint8_t> prove(
     const faest::sha256_circuit::Circuit& circuit,
     const faest::sha256_circuit::Message& secret_message,
@@ -201,33 +217,34 @@ std::vector<std::uint8_t> prove(
   }
 
   const auto witness = build_witness(circuit, secret_message);
-  const auto mu = hash_statement(public_digest, context);
+  const auto layout = witness_layout(circuit);
+  const auto mu = hash_statement(circuit.message_length(), public_digest, context);
   std::array<std::uint8_t, lambda_bytes> root_key{};
   std::array<std::uint8_t, 16> iv_pre{};
   std::array<std::uint8_t, 16> iv{};
   derive_commitment_seed(witness, mu, randomness, root_key, iv_pre, iv);
 
-  FaestVoleCommitment commitment(root_key, iv);
+  FaestVoleCommitment commitment(root_key, iv, layout.vole_bits);
   auto v = commitment.v_columns();
   const auto chall_1 = challenge_1(mu, commitment.commitment_hash(), commitment.corrections(), iv);
 
   ProofFields fields;
   fields.corrections = commitment.corrections();
   fields.iv_pre = iv_pre;
-  vole_hash(fields.u_tilde.data(), chall_1.data(), commitment.u().data(), vole_witness_bits,
+  vole_hash(fields.u_tilde.data(), chall_1.data(), commitment.u().data(), layout.vole_bits,
             lambda_bits);
 
   H2_context_t chall_2_hash = challenge_2_prefix(chall_1, fields.u_tilde);
   std::array<std::uint8_t, utilde_bytes> v_tilde{};
   for (std::size_t column = 0; column != lambda_bits; ++column) {
-    vole_hash(v_tilde.data(), chall_1.data(), v[column], vole_witness_bits, lambda_bits);
+    vole_hash(v_tilde.data(), chall_1.data(), v[column], layout.vole_bits, lambda_bits);
     H2_update(&chall_2_hash, v_tilde.data(), v_tilde.size());
   }
 
   fields.d = mask_witness(witness, commitment.u());
   const auto chall_2 = finish_challenge_2(&chall_2_hash, fields.d);
   const auto qs_proof = sha256_quicksilver_prove(
-      circuit, witness, v, commitment.u().data() + vole_witness_bits / 8, public_digest, chall_2);
+      circuit, witness, v, commitment.u().data() + layout.vole_bytes, public_digest, chall_2);
   fields.a1 = qs_proof.a1;
   fields.a2 = qs_proof.a2;
 
@@ -243,7 +260,7 @@ std::vector<std::uint8_t> prove(
   }
   hash_clear(&chall_3_hash);
   if (!opened) throw std::runtime_error("Fiat-Shamir challenge search failed");
-  return serialize(fields);
+  return serialize(circuit, fields);
 }
 
 bool verify(const faest::sha256_circuit::Circuit& circuit,
@@ -251,23 +268,25 @@ bool verify(const faest::sha256_circuit::Circuit& circuit,
             std::span<const std::uint8_t> context,
             std::span<const std::uint8_t> serialized_proof) {
   ProofFields fields;
-  if (!deserialize(serialized_proof, fields) || !grinding_condition(fields.challenge_3)) return false;
+  if (!deserialize(circuit, serialized_proof, fields) || !grinding_condition(fields.challenge_3)) return false;
 
   std::array<std::uint8_t, 16> iv{};
   H4(iv.data(), fields.iv_pre.data(), lambda_bits);
   ReconstructedVole reconstructed;
+  const auto layout = witness_layout(circuit);
   if (!reconstruct_vole(iv, fields.challenge_3, fields.opening, fields.corrections,
+                        layout.vole_bits,
                         reconstructed)) {
     return false;
   }
 
-  const auto mu = hash_statement(public_digest, context);
+  const auto mu = hash_statement(circuit.message_length(), public_digest, context);
   const auto chall_1 = challenge_1(mu, reconstructed.commitment_hash, fields.corrections, iv);
   H2_context_t chall_2_hash = challenge_2_prefix(chall_1, fields.u_tilde);
   auto q = reconstructed.columns();
   std::array<std::uint8_t, utilde_bytes> q_tilde{};
   for (std::size_t column = 0; column != lambda_bits; ++column) {
-    vole_hash(q_tilde.data(), chall_1.data(), q[column], vole_witness_bits, lambda_bits);
+    vole_hash(q_tilde.data(), chall_1.data(), q[column], layout.vole_bits, lambda_bits);
     if (ptr_get_bit(fields.challenge_3.data(), column)) {
       for (std::size_t i = 0; i != q_tilde.size(); ++i) q_tilde[i] ^= fields.u_tilde[i];
     }

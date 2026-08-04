@@ -3,6 +3,7 @@
 #include "../sha256_circuit.hpp"
 
 #include <boost/test/unit_test.hpp>
+#include <openssl/evp.h>
 
 #include <algorithm>
 
@@ -15,7 +16,7 @@ BOOST_AUTO_TEST_SUITE(sha256_binary_circuit)
 
 BOOST_AUTO_TEST_CASE(fifty_five_a_standard_vector) {
   Message message{};
-  message.fill(static_cast<std::uint8_t>('a'));
+  std::fill_n(message.begin(), 55, static_cast<std::uint8_t>('a'));
   const Digest expected = {
       0x9f, 0x43, 0x90, 0xf8, 0xd3, 0x0c, 0x2d, 0xd9,
       0x2e, 0xc9, 0xf0, 0x95, 0xb6, 0x5e, 0x2b, 0x9a,
@@ -72,7 +73,7 @@ BOOST_AUTO_TEST_CASE(additional_standard_vectors) {
   BOOST_TEST(circuit.evaluate(zero) == zero_expected);
 
   Message incremental{};
-  for (std::size_t i = 0; i != incremental.size(); ++i) incremental[i] = i;
+  for (std::size_t i = 0; i != 55; ++i) incremental[i] = i;
   const Digest incremental_expected = {
       0x46, 0x3e, 0xb2, 0x8e, 0x72, 0xf8, 0x2e, 0x0a,
       0x96, 0xc0, 0xa4, 0xcc, 0x53, 0x69, 0x0c, 0x57,
@@ -80,6 +81,24 @@ BOOST_AUTO_TEST_CASE(additional_standard_vectors) {
       0xe0, 0xd4, 0x5a, 0xe5, 0x9b, 0x59, 0x8b, 0x59,
   };
   BOOST_TEST(circuit.evaluate(incremental) == incremental_expected);
+}
+
+BOOST_AUTO_TEST_CASE(generic_multiblock_matches_openssl) {
+  const std::array<std::size_t, 8> lengths = {0, 1, 55, 56, 64, 119, 120, 550};
+  for (const auto length : lengths) {
+    const Circuit circuit(length);
+    Message message{};
+    for (std::size_t i = 0; i != length; ++i) message[i] = static_cast<std::uint8_t>(7 * i + 3);
+    Digest expected{};
+    unsigned int output_size = 0;
+    BOOST_REQUIRE(EVP_Digest(message.data(), length, expected.data(), &output_size,
+                             EVP_sha256(), nullptr) == 1);
+    BOOST_REQUIRE(output_size == expected.size());
+    BOOST_TEST(circuit.evaluate(message) == expected, "length=" << length);
+    BOOST_TEST(circuit.verify_statement(message, expected));
+    BOOST_TEST(circuit.block_count() == (length * 8 + 65 + 511) / 512);
+  }
+  BOOST_TEST(Circuit(550).statistics().multiplication_gates == 363795U);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
