@@ -10,7 +10,7 @@ extern "C" {
 #include <algorithm>
 #include <stdexcept>
 
-namespace vole_sha256 {
+namespace vole_backend {
 namespace {
 
 std::vector<std::uint8_t*> make_columns(std::vector<std::uint8_t>& storage,
@@ -43,7 +43,7 @@ VoleLayout vole_layout(std::size_t witness_bits) {
   return {witness_bits, ell_hat_bits, ell_hat_bytes, 10 * ell_hat_bytes};
 }
 
-faest_paramset_t sha256_vole_parameters() {
+faest_paramset_t faest_vole_parameters() {
   auto parameters = *faest_get_paramset(FAEST_128S);
   // `l` is uint16_t in the FAEST parameter ABI.  The VOLE routines used by
   // this adapter take ell_hat explicitly and do not consult `l`; keep the
@@ -59,7 +59,7 @@ FaestVoleCommitment::FaestVoleCommitment(
     const std::array<std::uint8_t, lambda_bytes>& root_key,
     const std::array<std::uint8_t, 16>& iv, std::size_t witness_bits)
     : iv_(iv), layout_(vole_layout(witness_bits)) {
-  parameters_ = sha256_vole_parameters();
+  parameters_ = faest_vole_parameters();
 
   corrections_.resize((parameters_.tau - 1) * layout_.ell_hat_bytes);
   u_.resize(layout_.ell_hat_bytes);
@@ -132,7 +132,7 @@ bool reconstruct_vole(const std::array<std::uint8_t, 16>& iv,
   if (decomposition.size() != vole_opening_bytes || corrections.size() != layout.correction_bytes) {
     return false;
   }
-  auto parameters = sha256_vole_parameters();
+  auto parameters = faest_vole_parameters();
   reconstructed.challenge = challenge;
   reconstructed.ell_hat_bytes = layout.ell_hat_bytes;
   reconstructed.q_storage.assign(lambda_bits * layout.ell_hat_bytes, 0);
@@ -142,9 +142,10 @@ bool reconstruct_vole(const std::array<std::uint8_t, 16>& iv,
                           layout.ell_hat_bits, &parameters);
 }
 
-PackedWitness mask_witness(const PackedWitness& witness, const std::vector<std::uint8_t>& u) {
+std::vector<std::uint8_t> mask_witness(const std::vector<std::uint8_t>& witness,
+                                       const std::vector<std::uint8_t>& u) {
   if (u.size() < witness.size()) throw std::invalid_argument("VOLE u is shorter than witness");
-  PackedWitness masked(witness.size(), 0);
+  std::vector<std::uint8_t> masked(witness.size(), 0);
   for (std::size_t i = 0; i != masked.size(); ++i) masked[i] = witness[i] ^ u[i];
   return masked;
 }
@@ -164,4 +165,4 @@ bool check_vole_correlation(FaestVoleCommitment& commitment,
   return true;
 }
 
-} // namespace vole_sha256
+} // namespace vole_backend

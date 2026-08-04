@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
-#ifndef VOLE_SHA256_FAEST_VOLE_HPP
-#define VOLE_SHA256_FAEST_VOLE_HPP
+#ifndef VOLE_BACKEND_FAEST_VOLE_HPP
+#define VOLE_BACKEND_FAEST_VOLE_HPP
 
-#include "faest_quicksilver.hpp"
+#include "quicksilver_types.hpp"
 
 #include <array>
 #include <cstddef>
@@ -14,7 +14,7 @@ extern "C" {
 #include "instances.h"
 }
 
-namespace vole_sha256 {
+namespace vole_backend {
 
 constexpr std::size_t vole_extra_bits = 3 * lambda_bits + 16;
 constexpr std::size_t vole_opening_bytes = 3 * lambda_bytes * 11 + 102 * lambda_bytes;
@@ -28,7 +28,7 @@ struct VoleLayout {
 
 VoleLayout vole_layout(std::size_t witness_bits);
 
-faest_paramset_t sha256_vole_parameters();
+faest_paramset_t faest_vole_parameters();
 
 struct ReconstructedVole {
   std::array<std::uint8_t, lambda_bytes> challenge{};
@@ -73,7 +73,8 @@ private:
   VoleLayout layout_{};
 };
 
-PackedWitness mask_witness(const PackedWitness& witness, const std::vector<std::uint8_t>& u);
+std::vector<std::uint8_t> mask_witness(const std::vector<std::uint8_t>& witness,
+                                       const std::vector<std::uint8_t>& u);
 
 bool check_vole_correlation(FaestVoleCommitment& commitment,
                             ReconstructedVole& reconstructed);
@@ -85,6 +86,6 @@ bool reconstruct_vole(const std::array<std::uint8_t, 16>& iv,
                       std::size_t witness_bits,
                       ReconstructedVole& reconstructed);
 
-} // namespace vole_sha256
+} // namespace vole_backend
 
 #endif

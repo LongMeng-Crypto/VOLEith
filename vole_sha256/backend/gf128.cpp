@@ -5,7 +5,7 @@
 #include <iomanip>
 #include <ostream>
 
-namespace vole_sha256 {
+namespace vole_backend {
 
 Gf128 operator*(Gf128 lhs, Gf128 rhs) {
   Gf128 result{};
@@ -33,4 +33,4 @@ std::ostream& operator<<(std::ostream& stream, const Gf128& value) {
   return stream;
 }
 
-} // namespace vole_sha256
+} // namespace vole_backend

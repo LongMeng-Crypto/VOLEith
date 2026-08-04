@@ -6,6 +6,10 @@ replace the FAEST AES circuit.
 
 The current implementation contains:
 
+- an algorithm-independent in-memory `BinaryCircuit` IR and builder;
+- SHA-256 generation migrated onto that IR without changing proof behavior;
+- generic private/public input QuickSilver and NIZK APIs;
+- canonical `.vbc` serialization with circuit-hash transcript binding;
 - a public message length from 0 through 550 bytes, with secret message bytes;
 - standard SHA-256 padding and chaining over one through nine blocks;
 - public-length-derived witness and VOLE capacity: only actual message bits
@@ -39,6 +43,26 @@ build/vole-sha256 verify --digest-hex <64 hex chars> --message-length <0..550> -
 build/vole-sha256 inspect --message-length <0..550> --proof proof.bin
 build/vole-sha256 benchmark --iterations 10
 ```
+
+Generic circuit-file workflow:
+
+```sh
+build/vole-sha256 export-sha256-circuit --message-length 55 --circuit sha256-55.vbc
+build/vole-sha256 json-to-vbc --json examples/and_xor.json --circuit and_xor.vbc
+build/vole-sha256 circuit-inspect --circuit sha256-55.vbc
+build/vole-sha256 circuit-prove --circuit sha256-55.vbc \
+  --private-input-hex <packed private bits> \
+  --expected-output-hex <packed public output bits> \
+  --proof proof.bin --context app-v1
+build/vole-sha256 circuit-verify --circuit sha256-55.vbc \
+  --expected-output-hex <packed public output bits> \
+  --proof proof.bin --context app-v1
+```
+
+The strict JSON compiler format is documented in
+[`doc/JSON_CIRCUIT_FORMAT.md`](doc/JSON_CIRCUIT_FORMAT.md). Generic backend
+implementation files live under `backend/`; SHA-256 is an independent frontend
+under `circuits/sha256/`.
 
 To benchmark fresh random printable secrets and print every secret,
 public digest, prover/verifier time and proof size:

@@ -118,15 +118,10 @@ Circuit::Circuit(std::size_t message_length) : message_length_(message_length) {
     throw std::invalid_argument("SHA-256 message exceeds the 550-byte circuit limit");
   }
   block_count_ = (message_length * 8 + 1 + 64 + 511) / 512;
-  // Wire IDs 0 and 1 are canonical public constants.  Constant propagation in
-  // xor_wire/and_wire removes gates whose result is already public.
-  nodes_.push_back({Op::Constant, 0, 0, false});
-  nodes_.push_back({Op::Constant, 0, 0, true});
-
   CircuitBuilder b(*this);
   const auto multiplication_count = [this]() {
     return static_cast<std::size_t>(std::count_if(
-        nodes_.begin(), nodes_.end(), [](const Node& node) { return node.op == Op::And; }));
+        nodes().begin(), nodes().end(), [](const Node& node) { return node.op == Op::And; }));
   };
 
   // Secret bytes are supplied in ordinary byte order.  SHA-256 parses each
@@ -202,85 +197,55 @@ Circuit::Circuit(std::size_t message_length) : message_length_(message_length) {
     for (std::size_t byte = 0; byte != 4; ++byte) {
       for (std::size_t bit = 0; bit != 8; ++bit) {
         outputs_[(4 * word + byte) * 8 + bit] = chaining[word][24 - 8 * byte + bit];
+        circuit_.add_output(outputs_[(4 * word + byte) * 8 + bit]);
       }
     }
   }
 
   statistics_.secret_inputs = secret_input_bits();
-  statistics_.total_nodes = nodes_.size();
-  statistics_.xor_gates = std::count_if(nodes_.begin(), nodes_.end(),
+  statistics_.total_nodes = nodes().size();
+  statistics_.xor_gates = std::count_if(nodes().begin(), nodes().end(),
                                         [](const Node& n) { return n.op == Op::Xor; });
   statistics_.multiplication_gates = std::count_if(
-      nodes_.begin(), nodes_.end(), [](const Node& n) { return n.op == Op::And; });
+      nodes().begin(), nodes().end(), [](const Node& n) { return n.op == Op::And; });
+
+  std::string validation_error;
+  if (!circuit_.validate(&validation_error)) {
+    throw std::logic_error("generated invalid binary circuit: " + validation_error);
+  }
 }
 
 std::uint32_t Circuit::secret_input() {
-  nodes_.push_back({Op::SecretInput, 0, 0, false});
-  return static_cast<std::uint32_t>(nodes_.size() - 1);
+  return circuit_.private_input();
 }
 
 std::uint32_t Circuit::xor_wire(std::uint32_t lhs, std::uint32_t rhs) {
-  if (lhs == 0) return rhs;
-  if (rhs == 0) return lhs;
-  if (lhs == rhs) return 0;
-  nodes_.push_back({Op::Xor, lhs, rhs, false});
-  return static_cast<std::uint32_t>(nodes_.size() - 1);
+  return circuit_.xor_wire(lhs, rhs);
 }
 
 std::uint32_t Circuit::and_wire(std::uint32_t lhs, std::uint32_t rhs) {
-  if (lhs == 0 || rhs == 0) return 0;
-  if (lhs == 1) return rhs;
-  if (rhs == 1) return lhs;
-  if (lhs == rhs) return lhs; // Booleanity gives x*x=x without a new constraint.
-  nodes_.push_back({Op::And, lhs, rhs, false});
-  return static_cast<std::uint32_t>(nodes_.size() - 1);
+  return circuit_.and_wire(lhs, rhs);
 }
 
-std::vector<std::uint8_t> Circuit::evaluate_wires(const Message& message) const {
-  std::vector<std::uint8_t> values(nodes_.size());
-  std::size_t input_index = 0;
-  for (std::size_t i = 0; i != nodes_.size(); ++i) {
-    const auto& node = nodes_[i];
-    switch (node.op) {
-    case Op::Constant:
-      values[i] = static_cast<std::uint8_t>(node.constant);
-      break;
-    case Op::SecretInput: {
-      const std::size_t byte = input_index / 8;
-      const std::size_t bit = input_index % 8;
-      values[i] = static_cast<std::uint8_t>((message[byte] >> bit) & 1U);
-      ++input_index;
-      break;
-    }
-    case Op::Xor:
-      values[i] = values[node.lhs] ^ values[node.rhs];
-      break;
-    case Op::And:
-      values[i] = values[node.lhs] & values[node.rhs];
-      break;
-    }
+vole_backend::Evaluation Circuit::evaluate_ir(const Message& message) const {
+  std::vector<std::uint8_t> private_bits(secret_input_bits());
+  for (std::size_t bit = 0; bit != private_bits.size(); ++bit) {
+    private_bits[bit] = static_cast<std::uint8_t>((message[bit / 8] >> (bit % 8)) & 1U);
   }
-
-  return values;
+  return circuit_.evaluate(private_bits);
 }
 
 Digest Circuit::evaluate(const Message& message) const {
-  const auto values = evaluate_wires(message);
+  const auto evaluation = evaluate_ir(message);
   Digest digest{};
   for (std::size_t i = 0; i != outputs_.size(); ++i) {
-    if (values[outputs_[i]]) digest[i / 8] |= static_cast<std::uint8_t>(1U << (i % 8));
+    if (evaluation.outputs[i]) digest[i / 8] |= static_cast<std::uint8_t>(1U << (i % 8));
   }
   return digest;
 }
 
 std::vector<std::uint8_t> Circuit::multiplication_witness(const Message& message) const {
-  const auto values = evaluate_wires(message);
-  std::vector<std::uint8_t> witness;
-  witness.reserve(statistics_.multiplication_gates);
-  for (std::size_t i = 0; i != nodes_.size(); ++i) {
-    if (nodes_[i].op == Op::And) witness.push_back(values[i]);
-  }
-  return witness;
+  return evaluate_ir(message).multiplication_outputs;
 }
 
 bool Circuit::verify_statement(const Message& message, const Digest& claimed_digest) const {

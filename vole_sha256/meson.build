@@ -19,35 +19,48 @@ faest_internal = cpp.find_library('faest_no_random', dirs: faest_build_dir, stat
 openssl = dependency('openssl')
 faest_includes = include_directories('..', '../sha3', '../sha3/opt64')
 
-vole_sha256_sources = files(
-  'gf128.cpp',
-  'faest_quicksilver.cpp',
-  'faest_vole.cpp',
-  'nizk.cpp',
-  'quicksilver.cpp',
-  'sha256_circuit.cpp',
-  'witness.cpp',
+backend_sources = files(
+  'backend/binary_circuit.cpp',
+  'backend/backend_witness.cpp',
+  'backend/circuit_format.cpp',
+  'backend/json_circuit.cpp',
+  'backend/gf128.cpp',
+  'backend/generic_quicksilver.cpp',
+  'backend/generic_nizk.cpp',
+  'backend/faest_vole.cpp',
+  'backend/quicksilver.cpp',
 )
+
+sha256_frontend_sources = files(
+  'circuits/sha256/faest_quicksilver.cpp',
+  'circuits/sha256/nizk.cpp',
+  'circuits/sha256/sha256_circuit.cpp',
+  'circuits/sha256/witness.cpp',
+)
+
+project_includes = include_directories('.', 'backend', 'circuits/sha256')
 
 vole_sha256_lib = static_library(
   'vole_sha256',
-  vole_sha256_sources,
-  include_directories: [include_directories('.'), faest_includes],
+  backend_sources + sha256_frontend_sources,
+  include_directories: [project_includes, faest_includes],
   dependencies: [faest_internal, openssl],
   cpp_args: ['-Wno-psabi'],
 )
 
 vole_sha256_dep = declare_dependency(
   link_with: vole_sha256_lib,
-  include_directories: [include_directories('.'), faest_includes],
+  include_directories: [project_includes, faest_includes],
   dependencies: [faest_internal, openssl],
 )
 
 tests = executable(
   'vole_sha256_tests',
   files(
+    'tests/binary_circuit.cpp',
     'tests/main.cpp',
     'tests/faest_integration.cpp',
+    'tests/generic_backend.cpp',
     'tests/nizk.cpp',
     'tests/quicksilver.cpp',
     'tests/sha256_circuit.cpp',

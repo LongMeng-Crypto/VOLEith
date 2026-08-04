@@ -4,6 +4,7 @@
 
 #include "sha256_circuit.hpp"
 #include "witness.hpp"
+#include "quicksilver_types.hpp"
 
 #include <array>
 #include <cstdint>
@@ -15,17 +16,10 @@ extern "C" {
 
 namespace vole_sha256 {
 
-constexpr std::size_t lambda_bits = 128;
-constexpr std::size_t lambda_bytes = lambda_bits / 8;
-constexpr std::size_t quicksilver_challenge_bytes = 3 * lambda_bytes + 8;
-
-using QuicksilverChallenge = std::array<std::uint8_t, quicksilver_challenge_bytes>;
-
-struct QuicksilverProof {
-  std::array<std::uint8_t, lambda_bytes> a0{};
-  std::array<std::uint8_t, lambda_bytes> a1{};
-  std::array<std::uint8_t, lambda_bytes> a2{};
-};
+using vole_backend::lambda_bits;
+using vole_backend::lambda_bytes;
+using vole_backend::QuicksilverChallenge;
+using vole_backend::QuicksilverProof;
 
 // V/Q are lambda column pointers, each containing ell_hat bits.  These entry
 // points mirror FAEST's AES prover/verifier wrappers but traverse SHA-256 IR.

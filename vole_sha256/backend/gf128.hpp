@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: MIT */
-#ifndef VOLE_SHA256_GF128_HPP
-#define VOLE_SHA256_GF128_HPP
+#ifndef VOLE_BACKEND_GF128_HPP
+#define VOLE_BACKEND_GF128_HPP
 
 #include <cstdint>
 #include <iosfwd>
 
-namespace vole_sha256 {
+namespace vole_backend {
 
 // GF(2^128) in the polynomial basis used by FAEST:
 // X^128 + X^7 + X^2 + X + 1.
@@ -31,6 +31,6 @@ struct Gf128 {
 Gf128 operator*(Gf128 lhs, Gf128 rhs);
 std::ostream& operator<<(std::ostream& stream, const Gf128& value);
 
-} // namespace vole_sha256
+} // namespace vole_backend
 
 #endif

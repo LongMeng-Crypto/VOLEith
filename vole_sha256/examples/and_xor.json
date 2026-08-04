@@ -1,0 +1,14 @@
+{
+  "format": "vole-binary-circuit",
+  "version": 1,
+  "nodes": [
+    { "op": "constant", "value": 0 },
+    { "op": "constant", "value": 1 },
+    { "op": "private" },
+    { "op": "private" },
+    { "op": "public" },
+    { "op": "xor", "lhs": 2, "rhs": 3 },
+    { "op": "and", "lhs": 5, "rhs": 4 }
+  ],
+  "outputs": [5, 6]
+}

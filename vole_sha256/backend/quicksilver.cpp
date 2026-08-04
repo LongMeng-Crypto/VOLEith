@@ -2,7 +2,7 @@
 
 #include "quicksilver.hpp"
 
-namespace vole_sha256::quicksilver {
+namespace vole_backend::quicksilver {
 
 VerifierWire authenticate(const ProverWire& wire, const Gf128& delta) {
   return {wire.tag + delta * Gf128::from_bit(wire.value)};
@@ -58,4 +58,4 @@ void VerifierAccumulator::update(const Gf128& constraint_evaluation) {
   ++constraints_;
 }
 
-} // namespace vole_sha256::quicksilver
+} // namespace vole_backend::quicksilver

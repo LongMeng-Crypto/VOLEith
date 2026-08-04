@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 
-#include "../sha256_circuit.hpp"
+#include "../circuits/sha256/sha256_circuit.hpp"
+#include "../backend/circuit_format.hpp"
 
 #include <boost/test/unit_test.hpp>
 #include <openssl/evp.h>
@@ -45,6 +46,12 @@ BOOST_AUTO_TEST_CASE(structure_and_gate_count) {
                                           << stats.round_multiplications << ", feed-forward="
                                           << stats.feed_forward_multiplications);
   BOOST_TEST(stats.total_nodes == circuit.nodes().size());
+  const auto ir_stats = circuit.binary_circuit().statistics();
+  BOOST_TEST(ir_stats.private_inputs == stats.secret_inputs);
+  BOOST_TEST(ir_stats.public_inputs == 0U);
+  BOOST_TEST(ir_stats.xor_gates == stats.xor_gates);
+  BOOST_TEST(ir_stats.multiplication_gates == stats.multiplication_gates);
+  BOOST_TEST(circuit.binary_circuit().outputs().size() == 256U);
   BOOST_TEST(stats.multiplication_gates == 39201U);
   BOOST_TEST(stats.schedule_multiplications + stats.round_multiplications +
                  stats.feed_forward_multiplications ==
@@ -99,6 +106,17 @@ BOOST_AUTO_TEST_CASE(generic_multiblock_matches_openssl) {
     BOOST_TEST(circuit.block_count() == (length * 8 + 65 + 511) / 512);
   }
   BOOST_TEST(Circuit(550).statistics().multiplication_gates == 363795U);
+}
+
+BOOST_AUTO_TEST_CASE(sha256_ir_vbc_round_trip) {
+  const Circuit circuit(55);
+  const auto encoded = vole_backend::serialize_vbc(circuit.binary_circuit());
+  const auto decoded = vole_backend::deserialize_vbc(encoded);
+  BOOST_TEST(decoded.statistics().private_inputs == 440U);
+  BOOST_TEST(decoded.statistics().multiplication_gates == 39201U);
+  BOOST_TEST(decoded.outputs().size() == 256U);
+  BOOST_TEST(vole_backend::circuit_hash(decoded) ==
+             vole_backend::circuit_hash(circuit.binary_circuit()));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

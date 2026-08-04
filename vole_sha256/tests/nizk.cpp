@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 
-#include "../nizk.hpp"
-#include "../faest_vole.hpp"
-#include "../witness.hpp"
+#include "../circuits/sha256/nizk.hpp"
+#include "../backend/faest_vole.hpp"
+#include "../circuits/sha256/witness.hpp"
 
 #include <boost/test/unit_test.hpp>
 
@@ -80,13 +80,13 @@ BOOST_AUTO_TEST_CASE(serialized_fields_are_bound) {
   const auto proof = vole_sha256::prove(input.circuit, input.message, input.digest, input.context,
                                         input.randomness);
   const auto witness = vole_sha256::witness_layout(input.circuit);
-  const auto vole = vole_sha256::vole_layout(witness.vole_bits);
+  const auto vole = vole_backend::vole_layout(witness.vole_bits);
   const std::size_t u_tilde = 8 + vole.correction_bytes;
   const std::size_t d = u_tilde + 18;
   const std::size_t a1 = d + witness.vole_bytes;
   const std::size_t a2 = a1 + 16;
   const std::size_t opening = a2 + 16;
-  const std::size_t challenge = opening + vole_sha256::vole_opening_bytes;
+  const std::size_t challenge = opening + vole_backend::vole_opening_bytes;
   const std::size_t iv = challenge + 16;
   const std::size_t counter = iv + 16;
   const std::array<std::size_t, 9> offsets = {

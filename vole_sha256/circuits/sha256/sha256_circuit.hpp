@@ -7,6 +7,8 @@
 #ifndef SHA256_CIRCUIT_HPP
 #define SHA256_CIRCUIT_HPP
 
+#include "binary_circuit.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -23,14 +25,8 @@ constexpr std::size_t digest_bytes         = 32;
 using Message = std::array<std::uint8_t, secret_message_bytes>;
 using Digest  = std::array<std::uint8_t, digest_bytes>;
 
-enum class Op : std::uint8_t { Constant, SecretInput, Xor, And };
-
-struct Node {
-  Op op;
-  std::uint32_t lhs;
-  std::uint32_t rhs;
-  bool constant;
-};
+using Op = vole_backend::Op;
+using Node = vole_backend::Node;
 
 struct Statistics {
   std::size_t secret_inputs;
@@ -60,13 +56,14 @@ public:
   std::size_t message_length() const { return message_length_; }
   std::size_t secret_input_bits() const { return message_length_ * 8; }
   std::size_t block_count() const { return block_count_; }
-  const std::vector<Node>& nodes() const { return nodes_; }
+  const std::vector<Node>& nodes() const { return circuit_.nodes(); }
+  const vole_backend::BinaryCircuit& binary_circuit() const { return circuit_; }
   const std::array<std::uint32_t, 256>& output_wires() const { return outputs_; }
   const std::vector<std::uint32_t>& input_wires() const { return inputs_; }
 
 private:
   friend class CircuitBuilder;
-  std::vector<Node> nodes_;
+  vole_backend::BinaryCircuit circuit_;
   std::array<std::uint32_t, 256> outputs_{};
   std::vector<std::uint32_t> inputs_;
   Statistics statistics_{};
@@ -76,7 +73,7 @@ private:
   std::uint32_t secret_input();
   std::uint32_t xor_wire(std::uint32_t lhs, std::uint32_t rhs);
   std::uint32_t and_wire(std::uint32_t lhs, std::uint32_t rhs);
-  std::vector<std::uint8_t> evaluate_wires(const Message& message) const;
+  vole_backend::Evaluation evaluate_ir(const Message& message) const;
 };
 
 } // namespace faest::sha256_circuit

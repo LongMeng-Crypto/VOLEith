@@ -1,8 +1,11 @@
 /* SPDX-License-Identifier: MIT */
 
-#include "nizk.hpp"
-#include "sha256_circuit.hpp"
-#include "witness.hpp"
+#include "backend/circuit_format.hpp"
+#include "backend/generic_nizk.hpp"
+#include "backend/json_circuit.hpp"
+#include "circuits/sha256/nizk.hpp"
+#include "circuits/sha256/sha256_circuit.hpp"
+#include "circuits/sha256/witness.hpp"
 
 #include <openssl/evp.h>
 #include <openssl/rand.h>
@@ -120,6 +123,24 @@ std::vector<std::uint8_t> context_bytes(const std::map<std::string, std::string>
   return {found->second.begin(), found->second.end()};
 }
 
+std::vector<std::uint8_t> packed_bits(const std::map<std::string, std::string>& opts,
+                                      const std::string& key, std::size_t bit_count,
+                                      bool required_value) {
+  const auto found = opts.find(key);
+  if (found == opts.end()) {
+    if (required_value && bit_count != 0) throw std::invalid_argument("missing required option " + key);
+    return std::vector<std::uint8_t>(bit_count, 0);
+  }
+  const auto bytes = from_hex(found->second);
+  if (bytes.size() != (bit_count + 7) / 8) throw std::invalid_argument(key + " has wrong packed size");
+  if (bit_count % 8 != 0 && !bytes.empty() && (bytes.back() >> (bit_count % 8)) != 0) {
+    throw std::invalid_argument(key + " has nonzero unused high bits");
+  }
+  std::vector<std::uint8_t> bits(bit_count);
+  for (std::size_t i = 0; i != bit_count; ++i) bits[i] = (bytes[i / 8] >> (i % 8)) & 1U;
+  return bits;
+}
+
 vole_sha256::ProverRandomness randomness(const std::map<std::string, std::string>& opts) {
   const auto found = opts.find("--randomness-hex");
   if (found != opts.end()) {
@@ -152,7 +173,94 @@ void usage() {
       << "  vole-sha256 verify --digest-hex HEX --message-length BYTES --proof FILE [--context TEXT]\n"
       << "  vole-sha256 inspect --message-length BYTES --proof FILE\n"
       << "  vole-sha256 benchmark [--iterations N] [--message-hex HEX] [--context TEXT] "
-         "[--message-bytes N] [--random-messages true] [--print-samples true]\n";
+         "[--message-bytes N] [--random-messages true] [--print-samples true]\n"
+      << "  vole-sha256 export-sha256-circuit --message-length BYTES --circuit FILE\n"
+      << "  vole-sha256 json-to-vbc --json FILE --circuit FILE\n"
+      << "  vole-sha256 circuit-inspect --circuit FILE\n"
+      << "  vole-sha256 circuit-prove --circuit FILE --private-input-hex HEX "
+         "[--public-input-hex HEX] --expected-output-hex HEX --proof FILE [--context TEXT]\n"
+      << "  vole-sha256 circuit-verify --circuit FILE [--public-input-hex HEX] "
+         "--expected-output-hex HEX --proof FILE [--context TEXT]\n";
+}
+
+int command_json_to_vbc(const std::map<std::string, std::string>& opts) {
+  const auto input = read_file(required(opts, "--json"));
+  const std::string json(input.begin(), input.end());
+  const auto circuit = vole_backend::compile_json_circuit(json);
+  const auto encoded = vole_backend::serialize_vbc(circuit);
+  write_file(required(opts, "--circuit"), encoded);
+  const auto stats = circuit.statistics();
+  std::cout << "circuit_bytes=" << encoded.size() << '\n'
+            << "circuit_hash=" << to_hex(vole_backend::circuit_hash(encoded)) << '\n'
+            << "nodes=" << stats.total_nodes << '\n'
+            << "private_input_bits=" << stats.private_inputs << '\n'
+            << "public_input_bits=" << stats.public_inputs << '\n'
+            << "outputs=" << circuit.outputs().size() << '\n'
+            << "multiplication_gates=" << stats.multiplication_gates << '\n';
+  return 0;
+}
+
+vole_backend::BinaryCircuit load_circuit(const std::map<std::string, std::string>& opts) {
+  const auto bytes = read_file(required(opts, "--circuit"));
+  return vole_backend::deserialize_vbc(bytes);
+}
+
+int command_export_sha256_circuit(const std::map<std::string, std::string>& opts) {
+  const Circuit circuit(std::stoul(required(opts, "--message-length")));
+  const auto encoded = vole_backend::serialize_vbc(circuit.binary_circuit());
+  write_file(required(opts, "--circuit"), encoded);
+  std::cout << "circuit_bytes=" << encoded.size() << '\n'
+            << "circuit_hash=" << to_hex(vole_backend::circuit_hash(encoded)) << '\n'
+            << "private_input_bits=" << circuit.secret_input_bits() << '\n'
+            << "public_input_bits=0\noutputs=256\n"
+            << "multiplication_gates=" << circuit.statistics().multiplication_gates << '\n';
+  return 0;
+}
+
+int command_circuit_inspect(const std::map<std::string, std::string>& opts) {
+  const auto encoded = read_file(required(opts, "--circuit"));
+  const auto circuit = vole_backend::deserialize_vbc(encoded);
+  const auto stats = circuit.statistics();
+  std::cout << "circuit_bytes=" << encoded.size() << '\n'
+            << "circuit_hash=" << to_hex(vole_backend::circuit_hash(encoded)) << '\n'
+            << "nodes=" << stats.total_nodes << '\n'
+            << "private_input_bits=" << stats.private_inputs << '\n'
+            << "public_input_bits=" << stats.public_inputs << '\n'
+            << "outputs=" << circuit.outputs().size() << '\n'
+            << "xor_gates=" << stats.xor_gates << '\n'
+            << "multiplication_gates=" << stats.multiplication_gates << '\n'
+            << "proof_bytes=" << vole_backend::serialized_proof_bytes(circuit) << '\n';
+  return 0;
+}
+
+vole_backend::PublicStatement generic_statement(const vole_backend::BinaryCircuit& circuit,
+                                                const std::map<std::string, std::string>& opts) {
+  const auto stats = circuit.statistics();
+  return {packed_bits(opts, "--public-input-hex", stats.public_inputs, false),
+          packed_bits(opts, "--expected-output-hex", circuit.outputs().size(), true)};
+}
+
+int command_circuit_prove(const std::map<std::string, std::string>& opts) {
+  const auto circuit = load_circuit(opts);
+  const auto statement = generic_statement(circuit, opts);
+  const auto private_bits = packed_bits(opts, "--private-input-hex",
+                                        circuit.statistics().private_inputs, true);
+  const auto proof = vole_backend::prove(circuit, private_bits, statement, context_bytes(opts),
+                                         randomness(opts));
+  write_file(required(opts, "--proof"), proof);
+  std::cout << "circuit_hash=" << to_hex(vole_backend::circuit_hash(circuit)) << '\n'
+            << "proof_bytes=" << proof.size() << '\n'
+            << "proof_sha256=" << to_hex(sha256(proof)) << '\n';
+  return 0;
+}
+
+int command_circuit_verify(const std::map<std::string, std::string>& opts) {
+  const auto circuit = load_circuit(opts);
+  const auto accepted = vole_backend::verify(circuit, generic_statement(circuit, opts),
+                                             context_bytes(opts),
+                                             read_file(required(opts, "--proof")));
+  std::cout << (accepted ? "VALID" : "INVALID") << '\n';
+  return accepted ? 0 : 1;
 }
 
 int command_prove(const std::map<std::string, std::string>& opts) {
@@ -324,6 +432,11 @@ int main(int argc, char** argv) {
     if (command == "verify") return command_verify(opts);
     if (command == "inspect") return command_inspect(opts);
     if (command == "benchmark") return command_benchmark(opts);
+    if (command == "export-sha256-circuit") return command_export_sha256_circuit(opts);
+    if (command == "json-to-vbc") return command_json_to_vbc(opts);
+    if (command == "circuit-inspect") return command_circuit_inspect(opts);
+    if (command == "circuit-prove") return command_circuit_prove(opts);
+    if (command == "circuit-verify") return command_circuit_verify(opts);
     usage();
     return 2;
   } catch (const std::exception& error) {

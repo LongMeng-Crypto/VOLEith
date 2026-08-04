@@ -1,13 +1,13 @@
 /* SPDX-License-Identifier: MIT */
-#ifndef VOLE_SHA256_QUICKSILVER_HPP
-#define VOLE_SHA256_QUICKSILVER_HPP
+#ifndef VOLE_BACKEND_QUICKSILVER_HPP
+#define VOLE_BACKEND_QUICKSILVER_HPP
 
 #include "gf128.hpp"
 
 #include <cstddef>
 #include <cstdint>
 
-namespace vole_sha256::quicksilver {
+namespace vole_backend::quicksilver {
 
 // Prover authentication tag t and verifier key k obey k = t + Delta*x.
 struct ProverWire {
@@ -74,6 +74,6 @@ private:
   std::size_t constraints_ = 0;
 };
 
-} // namespace vole_sha256::quicksilver
+} // namespace vole_backend::quicksilver
 
 #endif

@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: MIT */
 
-#include "../quicksilver.hpp"
+#include "../backend/quicksilver.hpp"
 
 #include <boost/test/unit_test.hpp>
 
-namespace qs = vole_sha256::quicksilver;
-using vole_sha256::Gf128;
+namespace qs = vole_backend::quicksilver;
+using vole_backend::Gf128;
 
 namespace {
 

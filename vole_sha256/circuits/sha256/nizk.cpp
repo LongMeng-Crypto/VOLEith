@@ -18,6 +18,8 @@ extern "C" {
 #include <stdexcept>
 
 namespace vole_sha256 {
+
+using namespace vole_backend;
 namespace {
 
 constexpr std::array<std::uint8_t, 8> proof_magic = {'V', 'S', 'H', '2', '5', '6', 2, 0};
@@ -133,7 +135,7 @@ std::array<std::uint8_t, lambda_bytes> finish_challenge_3(const H2_context_t& pr
 }
 
 bool grinding_condition(const std::array<std::uint8_t, lambda_bytes>& challenge) {
-  const auto parameters = sha256_vole_parameters();
+  const auto parameters = faest_vole_parameters();
   for (std::size_t bit = lambda_bits - parameters.w_grind; bit != lambda_bits; ++bit) {
     if (ptr_get_bit(challenge.data(), bit)) return false;
   }

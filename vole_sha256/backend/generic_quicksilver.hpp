@@ -1,0 +1,30 @@
+/* SPDX-License-Identifier: MIT */
+#ifndef VOLE_BACKEND_GENERIC_QUICKSILVER_HPP
+#define VOLE_BACKEND_GENERIC_QUICKSILVER_HPP
+
+#include "backend_witness.hpp"
+#include "quicksilver_types.hpp"
+
+#include <span>
+
+namespace vole_backend {
+
+QuicksilverProof quicksilver_prove(
+    const BinaryCircuit& circuit, const PackedWitness& witness,
+    std::span<const std::uint8_t> public_inputs,
+    std::span<const std::uint8_t> expected_outputs,
+    const std::vector<std::uint8_t*>& v_columns, const std::uint8_t* u_after_witness,
+    const QuicksilverChallenge& challenge_2);
+
+std::array<std::uint8_t, lambda_bytes> quicksilver_verify(
+    const BinaryCircuit& circuit, const PackedWitness& masked_witness,
+    std::span<const std::uint8_t> public_inputs,
+    std::span<const std::uint8_t> expected_outputs,
+    const std::vector<std::uint8_t*>& q_columns,
+    const std::array<std::uint8_t, lambda_bytes>& delta_bytes,
+    const QuicksilverChallenge& challenge_2,
+    const QuicksilverProof& proof);
+
+} // namespace vole_backend
+
+#endif

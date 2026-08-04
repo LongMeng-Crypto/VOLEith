@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 
-#include "../witness.hpp"
+#include "../circuits/sha256/witness.hpp"
 
 #include <boost/test/unit_test.hpp>
 #include <algorithm>

@@ -8,6 +8,7 @@ extern "C" {
 }
 
 #include <cassert>
+#include <stdexcept>
 
 namespace vole_sha256 {
 namespace {
@@ -66,7 +67,7 @@ void hash_prover_constraints(const faest::sha256_circuit::Circuit& circuit,
     case faest::sha256_circuit::Op::Constant:
       wires[i].value = node.constant;
       break;
-    case faest::sha256_circuit::Op::SecretInput: {
+    case faest::sha256_circuit::Op::PrivateInput: {
       const auto byte = input_index / 8;
       const auto bit = input_index % 8;
       wires[i].value = ((witness.secret_message[byte] >> bit) & 1U) != 0;
@@ -74,6 +75,8 @@ void hash_prover_constraints(const faest::sha256_circuit::Circuit& circuit,
       ++input_index;
       break;
     }
+    case faest::sha256_circuit::Op::PublicInput:
+      throw std::logic_error("SHA-256 adapter does not use BinaryCircuit public-input nodes");
     case faest::sha256_circuit::Op::Xor:
       wires[i].value = wires[node.lhs].value != wires[node.rhs].value;
       wires[i].tag = add(wires[node.lhs].tag, wires[node.rhs].tag);
@@ -129,9 +132,11 @@ void hash_verifier_constraints(const faest::sha256_circuit::Circuit& circuit,
     case faest::sha256_circuit::Op::Constant:
       wires[i].key = node.constant ? delta : bf128_zero();
       break;
-    case faest::sha256_circuit::Op::SecretInput:
+    case faest::sha256_circuit::Op::PrivateInput:
       wires[i].key = witness_keys[input_index++];
       break;
+    case faest::sha256_circuit::Op::PublicInput:
+      throw std::logic_error("SHA-256 adapter does not use BinaryCircuit public-input nodes");
     case faest::sha256_circuit::Op::Xor:
       wires[i].key = add(wires[node.lhs].key, wires[node.rhs].key);
       break;
