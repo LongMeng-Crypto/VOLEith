@@ -52,7 +52,7 @@ BOOST_AUTO_TEST_CASE(structure_and_gate_count) {
   BOOST_TEST(ir_stats.xor_gates == stats.xor_gates);
   BOOST_TEST(ir_stats.multiplication_gates == stats.multiplication_gates);
   BOOST_TEST(circuit.binary_circuit().outputs().size() == 256U);
-  BOOST_TEST(stats.multiplication_gates == 39201U);
+  BOOST_TEST(stats.multiplication_gates == 22217U);
   BOOST_TEST(stats.schedule_multiplications + stats.round_multiplications +
                  stats.feed_forward_multiplications ==
              stats.multiplication_gates);
@@ -105,7 +105,7 @@ BOOST_AUTO_TEST_CASE(generic_multiblock_matches_openssl) {
     BOOST_TEST(circuit.verify_statement(message, expected));
     BOOST_TEST(circuit.block_count() == (length * 8 + 65 + 511) / 512);
   }
-  BOOST_TEST(Circuit(550).statistics().multiplication_gates == 363795U);
+  BOOST_TEST(Circuit(550).statistics().multiplication_gates == 202803U);
 }
 
 BOOST_AUTO_TEST_CASE(sha256_ir_vbc_round_trip) {
@@ -113,7 +113,7 @@ BOOST_AUTO_TEST_CASE(sha256_ir_vbc_round_trip) {
   const auto encoded = vole_backend::serialize_vbc(circuit.binary_circuit());
   const auto decoded = vole_backend::deserialize_vbc(encoded);
   BOOST_TEST(decoded.statistics().private_inputs == 440U);
-  BOOST_TEST(decoded.statistics().multiplication_gates == 39201U);
+  BOOST_TEST(decoded.statistics().multiplication_gates == 22217U);
   BOOST_TEST(decoded.outputs().size() == 256U);
   BOOST_TEST(vole_backend::circuit_hash(decoded) ==
              vole_backend::circuit_hash(circuit.binary_circuit()));

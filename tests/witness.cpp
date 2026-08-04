@@ -25,11 +25,11 @@ BOOST_AUTO_TEST_CASE(pack_unpack_and_verify) {
   const auto packed = vole_sha256::build_witness(circuit, message);
   const auto layout = vole_sha256::witness_layout(circuit);
   const auto unpacked = vole_sha256::unpack_witness(circuit, packed);
-  BOOST_TEST(packed.size() == 4956U);
-  BOOST_TEST(layout.logical_bits == 39641U);
+  BOOST_TEST(packed.size() == 2833U);
+  BOOST_TEST(layout.logical_bits == 22657U);
   BOOST_TEST(layout.transport_padding_bits == 7U);
   BOOST_TEST(unpacked.secret_message == message);
-  BOOST_TEST(unpacked.multiplication_outputs.size() == 39201U);
+  BOOST_TEST(unpacked.multiplication_outputs.size() == 22217U);
   BOOST_TEST(vole_sha256::transport_padding_is_zero(circuit, packed));
   BOOST_TEST(vole_sha256::verify_witness(circuit, packed, digest));
 }

@@ -81,8 +81,10 @@ public:
       const Wire propagate = xor_(a[i], b[i]);
       sum[i] = xor_(propagate, carry);
       if (i != 31) {
-        const Wire generate = and_(a[i], b[i]);
-        carry = xor_(generate, and_(carry, propagate));
+        // maj(a,b,carry) = a XOR ((a XOR b) AND (a XOR carry)).
+        // This is the same full-adder carry as generate/propagate, but has
+        // multiplicative complexity one instead of two AND gates per bit.
+        carry = xor_(a[i], and_(propagate, xor_(a[i], carry)));
       }
     }
     return sum;
@@ -99,7 +101,8 @@ public:
   Word majority(const Word& x, const Word& y, const Word& z) {
     Word out{};
     for (std::size_t i = 0; i != 32; ++i) {
-      out[i] = xor_(and_(x[i], y[i]), and_(z[i], xor_(x[i], y[i])));
+      // maj(x,y,z) = x XOR ((x XOR y) AND (x XOR z)).
+      out[i] = xor_(x[i], and_(xor_(x[i], y[i]), xor_(x[i], z[i])));
     }
     return out;
   }
