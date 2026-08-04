@@ -1,6 +1,0 @@
-option(
-  'faest_build_dir',
-  type: 'string',
-  value: '../build',
-  description: 'Directory containing the unmodified parent FAEST static library and config.h',
-)
