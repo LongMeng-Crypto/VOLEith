@@ -1,65 +1,112 @@
-# Historical one-block release benchmark baseline
+# VOLEith benchmark reference
 
-The benchmark was run on 2026-08-04 from a Meson `release` build, linked to an
-unmodified FAEST `release` static library.  Ten complete, independently seeded
-proof/verification iterations gave:
+The numbers below were measured on the development machine with a Meson
+`release` build. Prover and verifier measurements cover only the in-process
+`prove()` and `verify()` calls: circuit loading/construction, input parsing,
+witness preparation outside `prove()`, process startup, and output formatting
+are excluded. Results are implementation baselines, not portable performance
+claims.
+
+## Optimized one-block SHA-256
+
+The current 55-byte circuit uses one-AND full-adder carries and a one-AND
+SHA-256 `Maj`. Ten iterations measured on 2026-08-04 gave:
 
 ```text
-multiplication gates       39,201
-logical witness bits       39,641
-VOLE witness bytes          4,956
-serialized proof bytes     57,270
-circuit construction       3.81 ms
-witness generation         1.60 ms
-prover mean               158.37 ms
-verifier mean             132.32 ms
-peak resident memory       29,572 KiB
+private input bits            440
+public output bits            256
+XOR gates                  94,618
+multiplication gates       22,217
+logical witness bits       22,657
+serialized proof bytes     33,917
+prover mean                 87.979 ms
+prover min                  78.433 ms
+prover max                 101.376 ms
+verifier mean               73.376 ms
+verifier min                67.958 ms
+verifier max                83.118 ms
 ```
 
-These are an implementation baseline, not constant-time or cross-machine
-performance claims.  The CLI reports wall-clock means and process-wide peak
-RSS; construction and witness timings are separate from `prove_mean_ms`.
+The canonical circuit hash is:
 
-Reproduce with:
-
-```sh
-meson setup build-release --buildtype=release
-meson compile -C build-release
-meson test -C build-release --print-errorlogs
-build-release/vole-sha256 benchmark --iterations 10 \
-  --message-hex 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30313233343536 \
-  --context benchmark-v1
+```text
+1da15d0c0cc37f9f0fc8245e70d145461d910fecf471fa94fa79f0504d64ad93
 ```
 
-Dynamic generic v2 retains the same 55-byte witness capacity and proof size,
-although its transcript domain and KAT bytes differ. Timings vary with CPU,
-compiler, backend and system load.
-
-## Random-message end-to-end benchmark
-
-`scripts/benchmark_random.py` asks the C++ benchmark process to generate a new
-random ASCII secret of the selected length for every sample. It prints the secret in
-ASCII and hex, the public SHA-256 digest, the prover/verifier timings and the
-serialized proof size.  Every generated proof is required to verify.
+Reproduce it with a 55-byte message and its SHA-256 digest:
 
 ```sh
+build-release/vole-sha256 export-sha256-circuit \
+  --message-length 55 --circuit sha256-55.vbc
+
+build-release/vole-sha256 circuit-benchmark \
+  --circuit sha256-55.vbc \
+  --private-input-hex "$MESSAGE_HEX" \
+  --expected-output-hex "$DIGEST_HEX" \
+  --context sha256-optimized-v1 \
+  --iterations 10
+```
+
+## Public-length-derived SHA-256 capacity
+
+The public message length determines the padding, number of compression blocks,
+circuit, committed witness, and proof size. The implementation supports 0 to
+550 secret bytes. Current structural measurements are:
+
+| Message bytes | SHA-256 blocks | Private bits | AND gates | XOR gates | Proof bytes |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 1 | 0 | 0 | 0 | 2,754 |
+| 1 | 1 | 8 | 20,515 | 85,875 | 30,980 |
+| 55 | 1 | 440 | 22,217 | 94,618 | 33,917 |
+| 56 | 2 | 448 | 39,680 | 164,857 | 57,930 |
+| 64 | 2 | 512 | 39,963 | 166,251 | 58,414 |
+| 119 | 2 | 952 | 44,852 | 191,736 | 65,740 |
+| 120 | 3 | 960 | 62,310 | 261,940 | 89,753 |
+| 550 | 9 | 4,400 | 202,803 | 869,238 | 287,665 |
+
+For an empty message the complete padded SHA-256 computation is constant, so
+the generator folds away all gates; 2,754 bytes are the fixed proof framing and
+VOLE/BAVC overhead.
+
+## AES-128 comparison
+
+Both AES experiments prove that a private AES-128 key maps a public plaintext
+to a public ciphertext. The portable Boolean frontend and the optimized
+FAEST-style extension-field relation are checked against the same FIPS-197
+known-answer vector.
+
+| AES-128 frontend | Nonlinear constraints | Extended witness | Proof bytes | Prover mean | Verifier mean |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Boolean baseline | 76,800 GF(2) AND | 76,928 bits | 108,530 | 309.943 ms | 267.969 ms |
+| FAEST-style | 200 GF(2^8) quadratic | 1,280 bits | 4,514 | 18.720 ms | 14.710 ms |
+
+The Boolean benchmark used ten iterations and observed prover min/max
+290.320/334.802 ms and verifier min/max 252.114/282.589 ms. The FAEST-style
+benchmark observed prover min/max 16.841/22.125 ms and verifier min/max
+14.106/15.515 ms.
+
+Commands for regenerating both AES relations and proofs are in
+[`../vole_aes/README.md`](../vole_aes/README.md).
+
+## Random-message SHA-256 benchmark
+
+`scripts/benchmark_random.py` asks one C++ benchmark process to generate a new
+random printable secret for every sample. It prints each secret in ASCII and
+hex, the public digest, proof size, timings, and verification result. The
+circuit is constructed once and reused.
+
+```sh
+scripts/benchmark_random.py --iterations 10 --message-bytes 55
 scripts/benchmark_random.py --iterations 10 --message-bytes 550
 ```
 
-The script is only a launcher: all samples run inside one C++ process and reuse
-one constructed circuit.  The prover timer surrounds only `prove()`, and the
-verifier timer surrounds only `verify()`, exactly matching the original C++
-benchmark timing boundaries.  Digest and witness generation, circuit
-construction, process startup and output formatting are excluded.  Circuit
-construction and mean witness-generation time are reported separately.
+The script defaults to `build-release/vole-sha256`; use `--binary PATH` to
+select another build.
 
-Dynamic-capacity sanity measurements from the development machine:
+## Historical pre-optimization SHA-256 baseline
 
-```text
-bytes  blocks  AND gates  proof bytes  prover ms  verifier ms
-55        1       39,201       57,270        143          120
-56        2       68,469       97,519        309          268
-550       9      363,795      509,029      1,654        1,480
-```
-
-These short runs demonstrate scaling and are not publication-quality results.
+Before the one-AND full-adder and `Maj` changes, the same 55-byte circuit used
+39,201 AND gates, a 39,641-bit logical witness, and a 57,270-byte proof. A later
+ten-iteration in-process run measured 132.825 ms prover time and 110.448 ms
+verifier time. These values are retained only to quantify the optimization and
+must not be treated as current circuit parameters.

@@ -1,5 +1,5 @@
 project(
-  'vole-sha256',
+  'VOLEith',
   ['c', 'cpp'],
   version: '0.1.0',
   meson_version: '>=0.59',
@@ -106,4 +106,4 @@ executable(
   cpp_args: ['-Wno-psabi'],
 )
 
-test('VOLE-SHA256', tests, timeout: 180)
+test('VOLEith', tests, timeout: 180)

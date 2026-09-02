@@ -48,8 +48,8 @@ grinding counter             4
 total                    derived from public length
 ```
 
-Examples are 2,754 bytes for an empty message, 57,270 bytes for 55 bytes,
-97,519 bytes for 56 bytes, and 509,029 bytes for the 550-byte maximum.
+Examples are 2,754 bytes for an empty message, 33,917 bytes for 55 bytes,
+57,930 bytes for 56 bytes, and 287,665 bytes for the 550-byte maximum.
 
 `a0` is intentionally absent: as in FAEST, the verifier reconstructs it from
 `Q`, `d`, `a1`, `a2`, and the public SHA-256 statement.

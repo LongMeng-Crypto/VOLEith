@@ -1,16 +1,17 @@
-# VOLEith-SHA256
+# VOLEith
 
-An independent VOLE-in-the-head/QuickSilver proof backend with SHA-256 and
-AES-128 binary-circuit frontends.
+An independent, circuit-oriented VOLE-in-the-head/QuickSilver proof system.
+The repository separates a generic proof backend from SHA-256 and AES-128
+frontends, and retains only the minimal FAEST primitives needed by the backend.
 
 The current implementation contains:
 
 - an algorithm-independent in-memory `BinaryCircuit` IR and builder;
-- SHA-256 generation migrated onto that IR without changing proof behavior;
-- an AES-128 frontend with private key, public plaintext and public ciphertext;
+- an optimized SHA-256 Boolean frontend with public-length-derived capacity;
+- both portable Boolean and FAEST-style extension-field AES-128 frontends;
 - generic private/public input QuickSilver and NIZK APIs;
 - canonical `.vbc` serialization with circuit-hash transcript binding;
-- a public message length from 0 through 550 bytes, with secret message bytes;
+- a public SHA-256 message length from 0 through 550 bytes, with secret message bytes;
 - standard SHA-256 padding and chaining over one through nine blocks;
 - public-length-derived witness and VOLE capacity: only actual message bits
   and actual circuit AND outputs are committed;
@@ -27,6 +28,23 @@ The current implementation contains:
 - a command-line prover/verifier, deterministic known-answer test, negative
   tests and release benchmark driver.
 
+## Current reference results
+
+Ten in-process iterations on the development machine produced the following
+reference measurements. They are implementation baselines, not portable
+performance guarantees.
+
+| Relation | Nonlinear constraints | Proof bytes | Prover mean | Verifier mean |
+| --- | ---: | ---: | ---: | ---: |
+| SHA-256, 55-byte secret, one block | 22,217 GF(2) AND | 33,917 | 87.98 ms | 73.38 ms |
+| AES-128 Boolean baseline | 76,800 GF(2) AND | 108,530 | 309.94 ms | 267.97 ms |
+| AES-128 FAEST-style | 200 GF(2^8) quadratic | 4,514 | 18.72 ms | 14.71 ms |
+
+The SHA-256 circuit uses one-AND full-adder carries and a one-AND `Maj`
+identity. XOR gates remain linear and do not add committed multiplication
+outputs. Full benchmark context and dynamic-size data are in
+[`doc/BENCHMARK.md`](doc/BENCHMARK.md).
+
 Build and test from a clean checkout:
 
 ```sh
@@ -34,6 +52,9 @@ meson setup build
 meson compile -C build
 meson test -C build --print-errorlogs
 ```
+
+The command-line executable is still named `vole-sha256` for compatibility
+with existing scripts, although the Meson project and repository are `VOLEith`.
 
 Example CLI workflow:
 
@@ -48,8 +69,8 @@ Generic circuit-file workflow:
 
 ```sh
 build/vole-sha256 export-sha256-circuit --message-length 55 --circuit sha256-55.vbc
-build/vole-sha256 export-aes128-circuit --circuit aes128.vbc
-build/vole-sha256 export-aes128-faest-relation --relation aes128-faest.vqir
+build/vole-sha256 export-aes128-circuit --circuit vole_aes/aes128.vbc
+build/vole-sha256 export-aes128-faest-relation --relation vole_aes/aes128-faest.vqir
 build/vole-sha256 json-to-vbc --json examples/and_xor.json --circuit and_xor.vbc
 build/vole-sha256 circuit-inspect --circuit sha256-55.vbc
 build/vole-sha256 circuit-prove --circuit sha256-55.vbc \
@@ -72,18 +93,23 @@ mean/min/max milliseconds, proof bytes, and XOR/AND gate counts.
 The optimized AES-128s relation uses extension-field quadratic constraints:
 
 ```sh
-build/vole-sha256 aes128-faest-prove --relation aes128-faest.vqir \
+build/vole-sha256 aes128-faest-prove --relation vole_aes/aes128-faest.vqir \
   --private-input-hex <16-byte-key> --public-input-hex <16-byte-plaintext> \
-  --expected-output-hex <16-byte-ciphertext> --proof aes.proof
-build/vole-sha256 aes128-faest-verify --relation aes128-faest.vqir \
+  --expected-output-hex <16-byte-ciphertext> --proof vole_aes/aes128-faest.proof
+build/vole-sha256 aes128-faest-verify --relation vole_aes/aes128-faest.vqir \
   --public-input-hex <16-byte-plaintext> \
-  --expected-output-hex <16-byte-ciphertext> --proof aes.proof
+  --expected-output-hex <16-byte-ciphertext> --proof vole_aes/aes128-faest.proof
 ```
 
 The strict JSON compiler format is documented in
 [`doc/JSON_CIRCUIT_FORMAT.md`](doc/JSON_CIRCUIT_FORMAT.md). Generic backend
 implementation files live under `backend/`; SHA-256 and AES-128 are independent
 frontends under `circuits/sha256/` and `circuits/aes/`.
+
+`vole_aes/` is a local experiment workspace with reproducible commands for the
+two AES frontends. Generated `.vbc`, `.vqir`, and `.proof` files are deliberately
+not versioned. A pre-refactor local `vole_sha256/` directory may exist in an old
+working tree, but it is not part of the current source layout.
 
 To benchmark fresh random printable secrets and print every secret,
 public digest, prover/verifier time and proof size:
@@ -106,7 +132,8 @@ and check that the verifier reconstructs the prover's `a0`.  They also reject
 an incorrect public digest, an incorrect committed AND output, and a tampered
 masked witness.
 
-The NIZK API is declared in `nizk.hpp`:
+The algorithm-independent NIZK API is declared in `backend/generic_nizk.hpp`;
+the SHA-256 convenience API is declared in `circuits/sha256/nizk.hpp`:
 
 ```cpp
 auto proof = vole_sha256::prove(circuit, secret_message, public_digest,

@@ -1,2 +1,6 @@
 build*/
 .vscode/
+/*.proof
+/*.vbc
+/*.vqir
+/vole_sha256/
