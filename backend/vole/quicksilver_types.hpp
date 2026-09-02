@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace vole_backend {
 
@@ -17,6 +18,17 @@ struct QuicksilverProof {
   std::array<std::uint8_t, lambda_bytes> a0{};
   std::array<std::uint8_t, lambda_bytes> a1{};
   std::array<std::uint8_t, lambda_bytes> a2{};
+};
+
+// Runtime-sized counterparts used by the parameterized binary-circuit
+// backend.  The legacy fixed-size aliases above remain the ABI used by the
+// SHA-256 compatibility frontend and the FAEST AES-128 relation.
+using ParameterizedQuicksilverChallenge = std::vector<std::uint8_t>;
+
+struct ParameterizedQuicksilverProof {
+  std::vector<std::uint8_t> a0;
+  std::vector<std::uint8_t> a1;
+  std::vector<std::uint8_t> a2;
 };
 
 } // namespace vole_backend

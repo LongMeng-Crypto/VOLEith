@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 namespace faest::sha256_circuit {
 namespace {
@@ -30,6 +31,12 @@ constexpr std::array<std::uint32_t, 64> round_constants = {
     0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 };
 
+InputVisibilityLayout default_input_visibility(std::size_t message_length) {
+  if (message_length > max_message_bytes)
+    throw std::invalid_argument("SHA-256 message exceeds the 550-byte circuit limit");
+  return InputVisibilityLayout::all_secret(message_length * 8);
+}
+
 } // namespace
 
 class CircuitBuilder {
@@ -38,7 +45,7 @@ public:
 
   Wire zero() { return 0; }
   Wire one() { return 1; }
-  Wire input() { return circuit_.secret_input(); }
+  Wire input(InputVisibility visibility) { return circuit_.input(visibility); }
   Wire xor_(Wire a, Wire b) { return circuit_.xor_wire(a, b); }
   Wire and_(Wire a, Wire b) { return circuit_.and_wire(a, b); }
 
@@ -116,10 +123,19 @@ private:
   Circuit& circuit_;
 };
 
-Circuit::Circuit(std::size_t message_length) : message_length_(message_length) {
+Circuit::Circuit(std::size_t message_length)
+    : Circuit(message_length, default_input_visibility(message_length)) {}
+
+Circuit::Circuit(std::size_t message_length,
+                 InputVisibilityLayout input_visibility)
+    : message_length_(message_length),
+      input_visibility_(std::move(input_visibility)) {
   if (message_length > max_message_bytes) {
     throw std::invalid_argument("SHA-256 message exceeds the 550-byte circuit limit");
   }
+  if (input_visibility_.message_bits() != message_length * 8)
+    throw std::invalid_argument(
+        "SHA-256 visibility layout length does not match message length");
   block_count_ = (message_length * 8 + 1 + 64 + 511) / 512;
   CircuitBuilder b(*this);
   const auto multiplication_count = [this]() {
@@ -133,7 +149,8 @@ Circuit::Circuit(std::size_t message_length) : message_length_(message_length) {
   inputs_.reserve(message_length * 8);
   for (std::size_t byte = 0; byte != message.size(); ++byte) {
     for (std::size_t bit = 0; bit != 8; ++bit) {
-      message[byte][bit] = b.input();
+      const auto fips_bit = 8 * byte + (7 - bit);
+      message[byte][bit] = b.input(input_visibility_.visibility_at(fips_bit));
       inputs_.push_back(message[byte][bit]);
     }
   }
@@ -206,6 +223,7 @@ Circuit::Circuit(std::size_t message_length) : message_length_(message_length) {
   }
 
   statistics_.secret_inputs = secret_input_bits();
+  statistics_.public_inputs = public_input_bits();
   statistics_.total_nodes = nodes().size();
   statistics_.xor_gates = std::count_if(nodes().begin(), nodes().end(),
                                         [](const Node& n) { return n.op == Op::Xor; });
@@ -218,8 +236,10 @@ Circuit::Circuit(std::size_t message_length) : message_length_(message_length) {
   }
 }
 
-std::uint32_t Circuit::secret_input() {
-  return circuit_.private_input();
+std::uint32_t Circuit::input(InputVisibility visibility) {
+  return visibility == InputVisibility::Secret
+             ? circuit_.private_input()
+             : circuit_.public_input();
 }
 
 std::uint32_t Circuit::xor_wire(std::uint32_t lhs, std::uint32_t rhs) {
@@ -231,11 +251,13 @@ std::uint32_t Circuit::and_wire(std::uint32_t lhs, std::uint32_t rhs) {
 }
 
 vole_backend::Evaluation Circuit::evaluate_ir(const Message& message) const {
-  std::vector<std::uint8_t> private_bits(secret_input_bits());
-  for (std::size_t bit = 0; bit != private_bits.size(); ++bit) {
-    private_bits[bit] = static_cast<std::uint8_t>((message[bit / 8] >> (bit % 8)) & 1U);
-  }
-  return circuit_.evaluate(private_bits);
+  const auto inputs = partition_input(message);
+  return circuit_.evaluate(inputs.private_bits, inputs.public_bits);
+}
+
+PartitionedInput Circuit::partition_input(const Message& message) const {
+  return input_visibility_.partition(
+      std::span(message.data(), message_length_));
 }
 
 Digest Circuit::evaluate(const Message& message) const {

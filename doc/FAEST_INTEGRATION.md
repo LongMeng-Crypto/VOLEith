@@ -2,17 +2,18 @@
 
 ## Parameters
 
-The prototype uses FAEST-128s VOLE/BAVC parameters with a public-length-derived
-SHA-256 witness length:
+The legacy SHA-256 convenience frontend and optimized AES relation use
+FAEST-128s. The generic binary-circuit backend additionally supports
+FAEST-192s and FAEST-256s:
 
-```text
-lambda            128 bits
-ell             round_up_8(message_bits + actual AND gates)
-ell_hat         ell + 400 bits
-ell_hat bytes   ceil(ell_hat / 8)
-tau                 11
-w_grind               7
-```
+| Level | lambda | ell_hat - ell | tau | w_grind | opening bytes |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 128 | 128 | 400 bits | 11 | 7 | 2,160 |
+| 192 | 192 | 592 bits | 16 | 12 | 5,040 |
+| 256 | 256 | 784 bits | 22 | 6 | 9,952 |
+
+For a binary circuit, `ell` is the byte-rounded sum of private-input bits and
+actual AND outputs. `ell_hat = ell + 3*lambda + 16`.
 
 The required upstream FAEST VOLE, BAVC, field, universal-hash and SHAKE
 primitives are vendored under `third_party/faest` with their MIT license.
@@ -22,8 +23,8 @@ accept `ell_hat` independently and do not consult that field.
 
 ## Prover
 
-`sha256_quicksilver_prove` converts the column-major FAEST `V` matrix into
-one GF(2^128) tag per committed witness bit.  Circuit wires are evaluated as:
+The traversal converts the column-major FAEST `V` matrix into one
+GF(2^lambda) tag per committed witness bit. Circuit wires are evaluated as:
 
 ```text
 secret input tag = V row [input index]
@@ -60,8 +61,9 @@ and each public output equality as
 Delta*(k_output + Delta*public_bit).
 ```
 
-`zk_hash_128_finalize` and the standard FAEST `a1/a2` reconstruction then
-produce the expected `a0` exactly when all constraints hold.
+The matching `zk_hash_128`, `zk_hash_192`, or `zk_hash_256` accumulator and
+the standard FAEST `a1/a2` reconstruction then produce the expected `a0`
+exactly when all constraints hold.
 
 ## VOLE correlation
 
@@ -81,4 +83,5 @@ Q[column] = V[column] XOR challenge[column]*u.
 ```
 
 The Fiat-Shamir transcript and serialized non-interactive proof layer built on
-this adapter are documented in `NIZK_PROOF_FORMAT.md`.
+this adapter are documented in `NIZK_PROOF_FORMAT.md`; the full parameter table
+and generic v2 header are in `SECURITY_PARAMETERS.md`.

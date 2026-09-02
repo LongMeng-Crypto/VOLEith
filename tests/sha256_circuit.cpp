@@ -2,6 +2,7 @@
 
 #include "../circuits/sha256/sha256_circuit.hpp"
 #include "../backend/circuit_format.hpp"
+#include "../backend/generic_nizk.hpp"
 
 #include <boost/test/unit_test.hpp>
 #include <openssl/evp.h>
@@ -12,6 +13,18 @@ using faest::sha256_circuit::Circuit;
 using faest::sha256_circuit::Digest;
 using faest::sha256_circuit::Message;
 using faest::sha256_circuit::Op;
+
+namespace {
+
+std::vector<std::uint8_t> unpack_bytes(
+    std::span<const std::uint8_t> bytes) {
+  std::vector<std::uint8_t> bits(bytes.size() * 8);
+  for (std::size_t i = 0; i != bits.size(); ++i)
+    bits[i] = static_cast<std::uint8_t>((bytes[i / 8] >> (i % 8)) & 1U);
+  return bits;
+}
+
+} // namespace
 
 BOOST_AUTO_TEST_SUITE(sha256_binary_circuit)
 
@@ -39,6 +52,7 @@ BOOST_AUTO_TEST_CASE(structure_and_gate_count) {
   const auto& stats = circuit.statistics();
 
   BOOST_TEST(stats.secret_inputs == 440U);
+  BOOST_TEST(stats.public_inputs == 0U);
   BOOST_TEST_MESSAGE("SHA-256 circuit: " << stats.multiplication_gates << " AND gates, "
                                           << stats.xor_gates << " XOR gates, "
                                           << stats.total_nodes << " total nodes; schedule="
@@ -117,6 +131,113 @@ BOOST_AUTO_TEST_CASE(sha256_ir_vbc_round_trip) {
   BOOST_TEST(decoded.outputs().size() == 256U);
   BOOST_TEST(vole_backend::circuit_hash(decoded) ==
              vole_backend::circuit_hash(circuit.binary_circuit()));
+}
+
+BOOST_AUTO_TEST_CASE(generic_visibility_layout_parsing_and_bit_packing) {
+  using faest::sha256_circuit::InputVisibility;
+  using faest::sha256_circuit::InputVisibilityLayout;
+  const auto layout = InputVisibilityLayout::parse(
+      16, " public:0:1, secret:1:9, public:9:16 ");
+  BOOST_TEST(layout.private_bits() == 8U);
+  BOOST_TEST(layout.public_bits() == 8U);
+  BOOST_TEST(layout.canonical_specification() ==
+             "public:0:1,secret:1:9,public:9:16");
+  BOOST_CHECK(layout.visibility_at(0) == InputVisibility::Public);
+  BOOST_CHECK(layout.visibility_at(1) == InputVisibility::Secret);
+  BOOST_CHECK(layout.visibility_at(15) == InputVisibility::Public);
+
+  const std::array<std::uint8_t, 2> message{0xa5, 0x3c};
+  const auto partitioned = layout.partition(message);
+  BOOST_TEST(faest::sha256_circuit::pack_input_bits(partitioned.private_bits) ==
+             std::vector<std::uint8_t>{0x25});
+  BOOST_TEST(faest::sha256_circuit::pack_input_bits(partitioned.public_bits) ==
+             std::vector<std::uint8_t>{0x79});
+
+  BOOST_CHECK_THROW(InputVisibilityLayout::parse(
+                        16, "secret:0:7,public:8:16"),
+                    std::invalid_argument);
+  BOOST_CHECK_THROW(InputVisibilityLayout::parse(
+                        16, "secret:0:9,public:8:16"),
+                    std::invalid_argument);
+  BOOST_CHECK_THROW(InputVisibilityLayout::parse(16, "secret:0:17"),
+                    std::invalid_argument);
+  BOOST_CHECK_THROW(InputVisibilityLayout::parse(
+                        16, "secret:0:8,unknown:8:16"),
+                    std::invalid_argument);
+  BOOST_CHECK_THROW(InputVisibilityLayout::parse(16, "secret:0:16,"),
+                    std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(mixed_visibility_sha256_proves_at_all_security_levels) {
+  using faest::sha256_circuit::InputVisibilityLayout;
+  constexpr std::size_t message_length = 48;
+  const auto layout = InputVisibilityLayout::parse(
+      message_length * 8, "secret:0:128,public:128:384");
+  const Circuit mixed(message_length, layout);
+  const Circuit all_secret(message_length);
+  BOOST_TEST(mixed.secret_input_bits() == 128U);
+  BOOST_TEST(mixed.public_input_bits() == 256U);
+  BOOST_TEST(mixed.statistics().multiplication_gates ==
+             all_secret.statistics().multiplication_gates);
+  BOOST_TEST(mixed.statistics().xor_gates == all_secret.statistics().xor_gates);
+  BOOST_TEST(vole_backend::circuit_hash(mixed.binary_circuit()) !=
+             vole_backend::circuit_hash(all_secret.binary_circuit()));
+
+  Message message{};
+  for (std::size_t i = 0; i != message_length; ++i)
+    message[i] = static_cast<std::uint8_t>(5 * i + 11);
+  Digest expected{};
+  unsigned int output_size = 0;
+  BOOST_REQUIRE(EVP_Digest(message.data(), message_length, expected.data(),
+                           &output_size, EVP_sha256(), nullptr) == 1);
+  BOOST_REQUIRE(output_size == expected.size());
+  BOOST_TEST(mixed.evaluate(message) == expected);
+
+  const auto partitioned = mixed.partition_input(message);
+  BOOST_TEST(partitioned.private_bits.size() == 128U);
+  BOOST_TEST(partitioned.public_bits.size() == 256U);
+  const auto private_packed =
+      faest::sha256_circuit::pack_input_bits(partitioned.private_bits);
+  const auto public_packed =
+      faest::sha256_circuit::pack_input_bits(partitioned.public_bits);
+  BOOST_TEST(std::equal(private_packed.begin(), private_packed.end(),
+                        message.begin()));
+  BOOST_TEST(std::equal(public_packed.begin(), public_packed.end(),
+                        message.begin() + 16));
+
+  const vole_backend::PublicStatement statement{
+      partitioned.public_bits, unpack_bytes(expected)};
+  const std::array<std::uint8_t, 19> context = {
+      's','h','a','2','5','6','-','v','i','s','i','b','i','l','i','t','y','-','1'};
+  vole_backend::ProverRandomness randomness{};
+  for (std::size_t i = 0; i != randomness.size(); ++i)
+    randomness[i] = static_cast<std::uint8_t>(0xa0 + i);
+  const std::array levels = {
+      vole_backend::SecurityLevel::Bits128,
+      vole_backend::SecurityLevel::Bits192,
+      vole_backend::SecurityLevel::Bits256,
+  };
+  for (const auto security : levels) {
+    const auto proof = vole_backend::prove(
+        mixed.binary_circuit(), security, partitioned.private_bits, statement,
+        context, randomness);
+    BOOST_TEST(vole_backend::verify(mixed.binary_circuit(), security, statement,
+                                    context, proof));
+    BOOST_TEST(proof.size() < vole_backend::serialized_proof_bytes(
+                                  all_secret.binary_circuit(), security));
+    auto wrong_public = statement;
+    wrong_public.public_inputs[3] ^= 1;
+    BOOST_TEST(!vole_backend::verify(mixed.binary_circuit(), security,
+                                     wrong_public, context, proof));
+  }
+
+  auto wrong_private = partitioned.private_bits;
+  wrong_private[5] ^= 1;
+  BOOST_CHECK_THROW(vole_backend::prove(
+                        mixed.binary_circuit(),
+                        vole_backend::SecurityLevel::Bits128, wrong_private,
+                        statement, context, randomness),
+                    std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

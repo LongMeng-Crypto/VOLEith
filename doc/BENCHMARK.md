@@ -44,8 +44,15 @@ build-release/vole-sha256 circuit-benchmark \
   --private-input-hex "$MESSAGE_HEX" \
   --expected-output-hex "$DIGEST_HEX" \
   --context sha256-optimized-v1 \
-  --iterations 10
+  --iterations 10 \
+  --security 128
 ```
+
+The generic benchmark also accepts `--security 192` and `--security 256`.
+For this same circuit, the exact proof sizes are 51,604 and 74,494 bytes,
+respectively. Fresh multi-iteration timings should be collected on the target
+DAA benchmark machine; the historical timing table above remains the 128-bit
+baseline.
 
 ## Public-length-derived SHA-256 capacity
 

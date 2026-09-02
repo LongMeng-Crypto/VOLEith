@@ -8,8 +8,12 @@ The current implementation contains:
 
 - an algorithm-independent in-memory `BinaryCircuit` IR and builder;
 - an optimized SHA-256 Boolean frontend with public-length-derived capacity;
+- arbitrary bit-range SHA-256 input visibility layouts, with public bits in
+  the statement and secret bits in the VOLE witness;
 - both portable Boolean and FAEST-style extension-field AES-128 frontends;
 - generic private/public input QuickSilver and NIZK APIs;
+- runtime-selectable 128-, 192-, and 256-bit soundness for every generic
+  binary-circuit proof;
 - canonical `.vbc` serialization with circuit-hash transcript binding;
 - a public SHA-256 message length from 0 through 550 bytes, with secret message bytes;
 - standard SHA-256 padding and chaining over one through nine blocks;
@@ -17,8 +21,8 @@ The current implementation contains:
   and actual circuit AND outputs are committed;
 - a generic degree-2 QuickSilver algebra layer for `x*y+z=0` and public linear
   constraints;
-- randomized constraint aggregation over the FAEST GF(2^128) polynomial
-  basis;
+- randomized constraint aggregation over the FAEST GF(2^128), GF(2^192), or
+  GF(2^256) polynomial basis selected for the proof;
 - full SHA-256 constraint traversal through FAEST's native
   `zk_hash_128_3`/`zk_hash_128` QuickSilver accumulators;
 - vendored minimal FAEST `vole_commit`, BAVC, field and SHAKE primitives under
@@ -72,23 +76,31 @@ build/vole-sha256 export-sha256-circuit --message-length 55 --circuit sha256-55.
 build/vole-sha256 export-aes128-circuit --circuit vole_aes/aes128.vbc
 build/vole-sha256 export-aes128-faest-relation --relation vole_aes/aes128-faest.vqir
 build/vole-sha256 json-to-vbc --json examples/and_xor.json --circuit and_xor.vbc
-build/vole-sha256 circuit-inspect --circuit sha256-55.vbc
+build/vole-sha256 circuit-inspect --circuit sha256-55.vbc --security 128
 build/vole-sha256 circuit-prove --circuit sha256-55.vbc \
   --private-input-hex <packed private bits> \
   --expected-output-hex <packed public output bits> \
-  --proof proof.bin --context app-v1
+  --proof proof.bin --context app-v1 --security 128
 build/vole-sha256 circuit-verify --circuit sha256-55.vbc \
   --expected-output-hex <packed public output bits> \
-  --proof proof.bin --context app-v1
+  --proof proof.bin --context app-v1 --security 128
 build/vole-sha256 circuit-benchmark --circuit sha256-55.vbc \
   --private-input-hex <packed private bits> \
   --expected-output-hex <packed public output bits> \
-  --context app-v1 --iterations 10
+  --context app-v1 --iterations 10 --security 128
 ```
 
 `circuit-benchmark` deserializes the circuit and parses all inputs once, then
 times only the in-process generic `prove()` and `verify()` calls. It reports
 mean/min/max milliseconds, proof bytes, and XOR/AND gate counts.
+
+Use `--security 128`, `--security 192`, or `--security 256` on all four
+`circuit-*` commands. The default is 128 for command compatibility. The
+selected level controls the FAEST-S VOLE/BAVC instance, number of VOLE columns,
+extension field, all Fiat-Shamir output lengths, grinding condition, and proof
+layout. It is encoded in the v2 proof header and transcript; a verifier invoked
+at another level rejects the proof before reconstruction. The optimized
+AES-128 FAEST relation remains intentionally fixed to FAEST-128s.
 
 The optimized AES-128s relation uses extension-field quadratic constraints:
 
@@ -105,6 +117,25 @@ The strict JSON compiler format is documented in
 [`doc/JSON_CIRCUIT_FORMAT.md`](doc/JSON_CIRCUIT_FORMAT.md). Generic backend
 implementation files live under `backend/`; SHA-256 and AES-128 are independent
 frontends under `circuits/sha256/` and `circuits/aes/`.
+
+Mixed public/secret SHA-256 inputs use a complete range partition. For a
+48-byte preimage whose first 128 bits are secret and remaining 256 bits are
+public:
+
+```sh
+build/vole-sha256 export-sha256-circuit --message-length 48 \
+  --input-layout-bits "secret:0:128,public:128:384" \
+  --circuit sha256-mixed.vbc
+
+build/vole-sha256 sha256-partition-input \
+  --message-hex <48-byte-complete-message> \
+  --input-layout-bits "secret:0:128,public:128:384"
+```
+
+The partition helper emits compact `private_input_hex`, `public_input_hex`,
+and the public digest for `circuit-prove`. Ranges are half-open, may alternate
+at arbitrary bit positions, and must cover the complete message. See
+[`doc/SHA256_INPUT_VISIBILITY.md`](doc/SHA256_INPUT_VISIBILITY.md).
 
 `vole_sha256/` and `vole_aes/` are symmetric experiment workspaces containing
 reproducible commands for their frontends. Generated `.vbc`, `.vqir`, `.proof`,
@@ -141,3 +172,17 @@ auto proof = vole_sha256::prove(circuit, secret_message, public_digest,
 bool ok = vole_sha256::verify(circuit, public_digest,
                               application_context, proof);
 ```
+
+The parameterized generic binary-circuit API is:
+
+```cpp
+using vole_backend::SecurityLevel;
+auto proof = vole_backend::prove(circuit, SecurityLevel::Bits192,
+                                 private_bits, statement, context, randomness);
+bool ok = vole_backend::verify(circuit, SecurityLevel::Bits192,
+                               statement, context, proof);
+```
+
+This is the interface intended for the forthcoming SHA-256/SHA-384/SHA-512
+TPM relations. Parameter definitions and proof-layout formulas are documented
+in [`doc/SECURITY_PARAMETERS.md`](doc/SECURITY_PARAMETERS.md).

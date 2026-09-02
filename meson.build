@@ -43,6 +43,7 @@ backend_sources = files(
   'backend/backend_witness.cpp',
   'backend/circuit_format.cpp',
   'backend/json_circuit.cpp',
+  'backend/security_parameters.cpp',
   'backend/quadratic_relation.cpp',
   'backend/vole/gf128.cpp',
   'backend/generic_quicksilver.cpp',
@@ -52,6 +53,7 @@ backend_sources = files(
 )
 
 sha256_frontend_sources = files(
+  'circuits/sha256/input_visibility.cpp',
   'circuits/sha256/faest_quicksilver.cpp',
   'circuits/sha256/nizk.cpp',
   'circuits/sha256/sha256_circuit.cpp',

@@ -61,3 +61,24 @@ build-release/vole-sha256 circuit-benchmark \
 For a different public message length from 0 through 550 bytes, export a
 matching `.vbc`; the SHA-256 padding, block count, witness capacity, and proof
 size are derived from that public length.
+
+## Mixed public and secret message bits
+
+The frontend also accepts a complete, arbitrary bit-range visibility layout.
+For a 16-byte secret followed by a 32-byte public value:
+
+```sh
+build-release/vole-sha256 export-sha256-circuit \
+  --message-length 48 \
+  --input-layout-bits "secret:0:128,public:128:384" \
+  --circuit vole_sha256/sha256-sk-public.vbc
+
+build-release/vole-sha256 sha256-partition-input \
+  --message-hex <16-byte-secret><32-byte-public> \
+  --input-layout-bits "secret:0:128,public:128:384"
+```
+
+Use the emitted `private_input_hex`, `public_input_hex`, and `public_sha256`
+with `circuit-prove` and `circuit-verify`. Non-byte-aligned and alternating
+ranges are supported; details are in
+[`../doc/SHA256_INPUT_VISIBILITY.md`](../doc/SHA256_INPUT_VISIBILITY.md).

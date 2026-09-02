@@ -10,6 +10,12 @@
 namespace vole_sha256 {
 namespace {
 
+void require_all_secret(const faest::sha256_circuit::Circuit& circuit) {
+  if (circuit.public_input_bits() != 0)
+    throw std::invalid_argument(
+        "legacy SHA-256 witness API only supports all-secret input; use the generic backend");
+}
+
 bool get_bit(const PackedWitness& packed, std::size_t bit) {
   return ((packed[bit / 8] >> (bit % 8)) & 1U) != 0;
 }
@@ -22,6 +28,7 @@ void set_bit(PackedWitness& packed, std::size_t bit, bool value) {
 } // namespace
 
 WitnessLayout witness_layout(const faest::sha256_circuit::Circuit& circuit) {
+  require_all_secret(circuit);
   const std::size_t inputs = circuit.secret_input_bits();
   const std::size_t products = circuit.statistics().multiplication_gates;
   const std::size_t logical = inputs + products;
@@ -31,6 +38,7 @@ WitnessLayout witness_layout(const faest::sha256_circuit::Circuit& circuit) {
 
 PackedWitness build_witness(const faest::sha256_circuit::Circuit& circuit,
                             const faest::sha256_circuit::Message& secret_message) {
+  require_all_secret(circuit);
   const auto layout = witness_layout(circuit);
   PackedWitness packed(layout.vole_bytes, 0);
   std::copy_n(secret_message.begin(), circuit.message_length(), packed.begin());
@@ -45,6 +53,7 @@ PackedWitness build_witness(const faest::sha256_circuit::Circuit& circuit,
 
 UnpackedWitness unpack_witness(const faest::sha256_circuit::Circuit& circuit,
                                const PackedWitness& packed) {
+  require_all_secret(circuit);
   const auto layout = witness_layout(circuit);
   if (packed.size() != layout.vole_bytes) throw std::invalid_argument("wrong witness size");
   UnpackedWitness unpacked;
@@ -59,6 +68,7 @@ UnpackedWitness unpack_witness(const faest::sha256_circuit::Circuit& circuit,
 
 bool transport_padding_is_zero(const faest::sha256_circuit::Circuit& circuit,
                                const PackedWitness& packed) {
+  require_all_secret(circuit);
   const auto layout = witness_layout(circuit);
   if (packed.size() != layout.vole_bytes) return false;
   for (std::size_t i = layout.logical_bits; i != layout.vole_bits; ++i) {

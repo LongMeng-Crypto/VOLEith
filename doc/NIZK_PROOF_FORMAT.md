@@ -1,5 +1,9 @@
 # Fiat-Shamir transcript and proof format
 
+This document first records the fixed-128 compatibility format used by the
+SHA-256 convenience API. The generic `.vbc` API now uses the parameterized v2
+format described in the final section.
+
 ## Transcript
 
 The statement digest is
@@ -57,3 +61,33 @@ Examples are 2,754 bytes for an empty message, 33,917 bytes for 55 bytes,
 The magic bytes contain both the protocol identifier and serialization
 version. The verifier derives the expected size from the public length and
 rejects an incorrect size or version before cryptographic processing.
+
+## Parameterized generic VBC proof v2
+
+For `vole_backend::prove(BinaryCircuit, SecurityLevel, ...)`, every occurrence
+of 128 above is replaced by the selected `lambda` (128, 192, or 256), and the
+corresponding FAEST-S VOLE/BAVC and `zk_hash_lambda` implementation is used.
+The generic transcript domain is `VOLE-BINARY-CIRCUIT-NIZK-v2` followed by the
+one-byte security-level code. Its relation identifier is a `2*lambda`-bit H2
+digest of the canonical VBC bytes, domain, and security level.
+
+```text
+field                    bytes
+magic/version/level          8
+VOLE corrections       (tau - 1) * ell_hat_bytes
+u_tilde                 lambda/8 + 2
+masked witness d        ceil(ell/8)
+a1                      lambda/8
+a2                      lambda/8
+BAVC opening            (3*tau + T_open) * lambda/8
+chall_3                 lambda/8
+IV preimage                 16
+grinding counter             4
+```
+
+The header is `VBCZK`, version 2, security code 1/2/3, and one reserved zero
+byte. A verifier is given an expected `SecurityLevel`; header mismatch, size
+mismatch, or a transcript generated at another level is rejected. Exact
+FAEST-S parameters are listed in `SECURITY_PARAMETERS.md`. For migration, only
+the 128-bit generic verifier additionally recognizes the former generic v1
+format; v1 is never interpreted as a 192- or 256-bit proof.
