@@ -54,6 +54,35 @@ respectively. Fresh multi-iteration timings should be collected on the target
 DAA benchmark machine; the historical timing table above remains the 128-bit
 baseline.
 
+## SHA-384 and SHA-512 DAA circuits
+
+The shared SHA-512-family core uses 64-bit one-AND full adders and one-AND
+`Ch`/`Maj` identities. The current DAA-shaped, one-block circuit sizes are:
+
+| Relation | Private bits | Public input bits | Output bits | AND gates | XOR gates | Security | Proof bytes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| SHA-384, `sk(192) || lid(384)` | 192 | 384 | 384 | 55,890 | 236,354 | 192 | 118,452 |
+| SHA-512, `sk(256) || lid(512)` | 256 | 512 | 512 | 56,764 | 240,250 | 256 | 168,984 |
+
+These are structural and exact proof-size results, not timing measurements.
+Use `circuit-benchmark` on the target machine to obtain in-process
+prove/verify mean, minimum, and maximum times. Reproduction commands and
+construction details are in
+[`SHA512_FAMILY_BINARY_CIRCUIT.md`](SHA512_FAMILY_BINARY_CIRCUIT.md).
+
+Run all three DAA-shaped benchmarks with their matching visibility and
+128/192/256-bit soundness profiles using:
+
+```sh
+scripts/benchmark_sha2.py --iterations 10
+```
+
+Use `--profile all-secret` to reproduce the 55-byte SHA-256, 72-byte SHA-384,
+and 96-byte SHA-512 all-witness cases. The driver also accepts arbitrary
+single-algorithm layouts and message lengths and prints the resulting exact
+compression-block count. See
+[`SHA2_BENCHMARK_DRIVER.md`](SHA2_BENCHMARK_DRIVER.md).
+
 ## Public-length-derived SHA-256 capacity
 
 The public message length determines the padding, number of compression blocks,

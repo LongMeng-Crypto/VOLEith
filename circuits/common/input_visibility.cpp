@@ -6,7 +6,7 @@
 #include <charconv>
 #include <stdexcept>
 
-namespace faest::sha256_circuit {
+namespace vole_circuits {
 namespace {
 
 std::string_view trim(std::string_view value) {
@@ -75,11 +75,14 @@ InputVisibilityLayout InputVisibilityLayout::from_ranges(
         range.visibility != InputVisibility::Public)
       throw std::invalid_argument("unsupported input visibility value");
     if (range.begin_bit != cursor)
-      throw std::invalid_argument("visibility ranges must be ordered and cover every input bit");
+      throw std::invalid_argument(
+          "visibility ranges must be ordered and cover every input bit");
     if (range.end_bit <= range.begin_bit || range.end_bit > message_bits)
       throw std::invalid_argument("invalid or out-of-range visibility interval");
-    std::fill(result.visibility_.begin() + static_cast<std::ptrdiff_t>(range.begin_bit),
-              result.visibility_.begin() + static_cast<std::ptrdiff_t>(range.end_bit),
+    std::fill(result.visibility_.begin() +
+                  static_cast<std::ptrdiff_t>(range.begin_bit),
+              result.visibility_.begin() +
+                  static_cast<std::ptrdiff_t>(range.end_bit),
               range.visibility);
     const auto count = range.end_bit - range.begin_bit;
     if (range.visibility == InputVisibility::Secret)
@@ -95,7 +98,8 @@ InputVisibilityLayout InputVisibilityLayout::from_ranges(
     cursor = range.end_bit;
   }
   if (cursor != message_bits)
-    throw std::invalid_argument("visibility layout does not cover the complete message");
+    throw std::invalid_argument(
+        "visibility layout does not cover the complete message");
   return result;
 }
 
@@ -104,17 +108,20 @@ InputVisibilityLayout InputVisibilityLayout::parse(
   specification = trim(specification);
   if (message_bits == 0) {
     if (!specification.empty())
-      throw std::invalid_argument("empty message must have an empty visibility layout");
+      throw std::invalid_argument(
+          "empty message must have an empty visibility layout");
     return {};
   }
-  if (specification.empty()) throw std::invalid_argument("visibility layout is empty");
+  if (specification.empty())
+    throw std::invalid_argument("visibility layout is empty");
   std::vector<VisibilityRange> ranges;
   while (!specification.empty()) {
     const auto comma = specification.find(',');
     const auto token = comma == std::string_view::npos
                            ? specification
                            : specification.substr(0, comma);
-    if (trim(token).empty()) throw std::invalid_argument("empty visibility range");
+    if (trim(token).empty())
+      throw std::invalid_argument("empty visibility range");
     ranges.push_back(parse_range(token));
     if (comma == std::string_view::npos) break;
     if (comma + 1 == specification.size())
@@ -135,7 +142,8 @@ std::string InputVisibilityLayout::canonical_specification() const {
   std::string result;
   for (const auto& range : ranges_) {
     if (!result.empty()) result.push_back(',');
-    result += range.visibility == InputVisibility::Secret ? "secret:" : "public:";
+    result += range.visibility == InputVisibility::Secret ? "secret:"
+                                                          : "public:";
     result += std::to_string(range.begin_bit);
     result.push_back(':');
     result += std::to_string(range.end_bit);
@@ -150,8 +158,6 @@ PartitionedInput InputVisibilityLayout::partition(
   PartitionedInput result;
   result.private_bits.reserve(private_bits_);
   result.public_bits.reserve(public_bits_);
-  // Preserve the existing input-node order: bytes in message order, then bits
-  // from least to most significant within each byte.
   for (std::size_t byte = 0; byte != message.size(); ++byte) {
     for (std::size_t storage_bit = 0; storage_bit != 8; ++storage_bit) {
       const auto fips_bit = 8 * byte + (7 - storage_bit);
@@ -177,4 +183,4 @@ std::vector<std::uint8_t> pack_input_bits(
   return packed;
 }
 
-} // namespace faest::sha256_circuit
+} // namespace vole_circuits

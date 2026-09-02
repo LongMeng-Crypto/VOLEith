@@ -41,11 +41,13 @@ faest_internal = static_library(
 backend_sources = files(
   'backend/binary_circuit.cpp',
   'backend/backend_witness.cpp',
+  'backend/prepared_binary_circuit.cpp',
   'backend/circuit_format.cpp',
   'backend/json_circuit.cpp',
   'backend/security_parameters.cpp',
   'backend/quadratic_relation.cpp',
   'backend/vole/gf128.cpp',
+  'backend/vole/bit_matrix_transpose.cpp',
   'backend/generic_quicksilver.cpp',
   'backend/generic_nizk.cpp',
   'backend/vole/faest_vole.cpp',
@@ -53,11 +55,17 @@ backend_sources = files(
 )
 
 sha256_frontend_sources = files(
-  'circuits/sha256/input_visibility.cpp',
+  'circuits/common/input_visibility.cpp',
   'circuits/sha256/faest_quicksilver.cpp',
   'circuits/sha256/nizk.cpp',
   'circuits/sha256/sha256_circuit.cpp',
   'circuits/sha256/witness.cpp',
+)
+
+sha2_64_frontend_sources = files(
+  'circuits/sha2/sha512_family.cpp',
+  'circuits/sha2/sha384_circuit.cpp',
+  'circuits/sha2/sha512_circuit.cpp',
 )
 
 aes_frontend_sources = files(
@@ -69,11 +77,10 @@ project_includes = include_directories('.', 'backend', 'backend/vole', 'circuits
 
 vole_sha256_lib = static_library(
   'vole_sha256',
-  backend_sources + sha256_frontend_sources + aes_frontend_sources,
+  backend_sources + sha256_frontend_sources + sha2_64_frontend_sources + aes_frontend_sources,
   include_directories: [project_includes, faest_includes],
   link_with: faest_internal,
   dependencies: openssl,
-  cpp_args: ['-Wno-psabi'],
 )
 
 vole_sha256_dep = declare_dependency(
@@ -86,18 +93,21 @@ tests = executable(
   'vole_sha256_tests',
   files(
     'tests/binary_circuit.cpp',
+    'tests/bit_matrix_transpose.cpp',
     'tests/aes_circuit.cpp',
     'tests/main.cpp',
     'tests/faest_integration.cpp',
+    'tests/fields.cpp',
     'tests/generic_backend.cpp',
     'tests/nizk.cpp',
     'tests/quicksilver.cpp',
     'tests/sha256_circuit.cpp',
+    'tests/sha512_family_circuit.cpp',
     'tests/witness.cpp',
   ),
   dependencies: [vole_sha256_dep, boost_test],
   include_directories: faest_includes,
-  cpp_args: ['-DBOOST_TEST_DYN_LINK', '-Wno-psabi'],
+  cpp_args: ['-DBOOST_TEST_DYN_LINK'],
 )
 
 executable(
@@ -105,7 +115,6 @@ executable(
   files('cli.cpp'),
   dependencies: [vole_sha256_dep, openssl],
   include_directories: faest_includes,
-  cpp_args: ['-Wno-psabi'],
 )
 
 test('VOLEith', tests, timeout: 180)

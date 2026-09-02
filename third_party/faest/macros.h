@@ -190,12 +190,14 @@
 #define ATTR_TARGET_SSE2 __attribute__((target("sse2")))
 #define ATTR_TARGET_AESNI __attribute__((target("sse2,aes")))
 #define ATTR_TARGET_AESNI_AVX2 __attribute__((target("avx2,bmi2,aes")))
+#define ATTR_TARGET_PCLMUL __attribute__((target("sse2,pclmul")))
 #else
 #define ATTR_TARGET(x)
 #define ATTR_TARGET_AVX2
 #define ATTR_TARGET_SSE2
 #define ATTR_TARGET_AESNI
 #define ATTR_TARGET_AESNI_AVX2
+#define ATTR_TARGET_PCLMUL
 #endif
 
 /* artificial attribute */
@@ -206,10 +208,19 @@
 #endif
 
 /* vector_size attribute */
-#if GNUC_CHECK(4, 8) || __has_attribute(vector_size)
+/*
+ * GCC changes the calling convention for 32-byte vector values depending on
+ * whether AVX is enabled.  Using vector_size(32) in a portable (non-AVX)
+ * build therefore both emits -Wpsabi diagnostics and forces expensive ABI
+ * fixups for bf192/bf256.  Keep the compact vector representation on targets
+ * where it has a native ABI, and use the existing scalar structs otherwise.
+ */
+#if (defined(__AVX__) || (!defined(__i386__) && !defined(__x86_64__))) && \
+    (GNUC_CHECK(4, 8) || __has_attribute(vector_size))
 #define HAVE_ATTR_VECTOR_SIZE
 #define ATTR_VECTOR_SIZE(s) __attribute__((vector_size(s)))
-#elif __has_attribute(__vector_size__)
+#elif (defined(__AVX__) || (!defined(__i386__) && !defined(__x86_64__))) && \
+    __has_attribute(__vector_size__)
 #define HAVE_ATTR_VECTOR_SIZE
 #define ATTR_VECTOR_SIZE(s) __attribute__((__vector_size__(s)))
 #else

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 
 #include "generic_quicksilver.hpp"
+#include "vole/bit_matrix_transpose.hpp"
 
 extern "C" {
 #include "universal_hashing.h"
@@ -19,12 +20,12 @@ std::vector<bf128_t> columns_to_rows(const std::vector<std::uint8_t*>& columns,
                                     std::size_t rows_count) {
   if (columns.size() != lambda_bits) throw std::invalid_argument("wrong VOLE column count");
   std::vector<bf128_t> rows(rows_count);
-  for (std::size_t row = 0; row != rows.size(); ++row) {
-    std::array<std::uint8_t, lambda_bytes> buffer{};
-    for (std::size_t column = 0; column != lambda_bits; ++column) {
-      if (ptr_get_bit(columns[column], row)) ptr_set_bit(buffer.data(), column, 1);
-    }
-    bf128_load(&rows[row], buffer.data());
+  for (std::size_t row_base = 0; row_base < rows_count; row_base += 64) {
+    const auto block_rows = std::min<std::size_t>(64, rows_count - row_base);
+    std::vector<std::uint8_t> packed(block_rows * lambda_bytes);
+    transpose_column_block(columns, row_base, block_rows, packed, lambda_bytes);
+    for (std::size_t row = 0; row != block_rows; ++row)
+      bf128_load(&rows[row_base + row], packed.data() + row * lambda_bytes);
   }
   return rows;
 }
@@ -50,6 +51,20 @@ void check_statement_sizes(const BinaryCircuit& circuit,
   const auto stats = circuit.statistics();
   if (public_inputs.size() != stats.public_inputs ||
       expected_outputs.size() != circuit.outputs().size()) {
+    throw std::invalid_argument("generic public statement size mismatch");
+  }
+  const auto invalid = [](std::uint8_t bit) { return bit > 1; };
+  if (std::any_of(public_inputs.begin(), public_inputs.end(), invalid) ||
+      std::any_of(expected_outputs.begin(), expected_outputs.end(), invalid)) {
+    throw std::invalid_argument("generic public statement must contain bits");
+  }
+}
+
+void check_statement_sizes(const PreparedBinaryCircuit& circuit,
+                           std::span<const std::uint8_t> public_inputs,
+                           std::span<const std::uint8_t> expected_outputs) {
+  if (public_inputs.size() != circuit.statistics().public_inputs ||
+      expected_outputs.size() != circuit.circuit().outputs().size()) {
     throw std::invalid_argument("generic public statement size mismatch");
   }
   const auto invalid = [](std::uint8_t bit) { return bit > 1; };
@@ -266,12 +281,12 @@ std::vector<typename Ops::Field> parameterized_columns_to_rows(
     const std::vector<std::uint8_t*>& columns, std::size_t rows_count) {
   if (columns.size() != Ops::bits) throw std::invalid_argument("wrong VOLE column count");
   std::vector<typename Ops::Field> rows(rows_count);
-  for (std::size_t row = 0; row != rows.size(); ++row) {
-    std::array<std::uint8_t, 32> buffer{};
-    for (std::size_t column = 0; column != Ops::bits; ++column) {
-      if (ptr_get_bit(columns[column], row)) ptr_set_bit(buffer.data(), column, 1);
-    }
-    Ops::load(&rows[row], buffer.data());
+  for (std::size_t row_base = 0; row_base < rows_count; row_base += 64) {
+    const auto block_rows = std::min<std::size_t>(64, rows_count - row_base);
+    std::vector<std::uint8_t> packed(block_rows * Ops::bytes);
+    transpose_column_block(columns, row_base, block_rows, packed, Ops::bytes);
+    for (std::size_t row = 0; row != block_rows; ++row)
+      Ops::load(&rows[row_base + row], packed.data() + row * Ops::bytes);
   }
   return rows;
 }
@@ -287,30 +302,30 @@ template<class Ops> struct ParameterizedVerifierWire {
 
 template<class Ops>
 void parameterized_prover_constraints(
-    const BinaryCircuit& circuit, const UnpackedWitness& witness,
+    const PreparedBinaryCircuit& prepared, const UnpackedWitness& witness,
     std::span<const std::uint8_t> public_inputs,
     const std::vector<typename Ops::Field>& tags,
     typename Ops::ProverHash* hasher) {
-  const auto layout = witness_layout(circuit);
-  std::vector<ParameterizedProverWire<Ops>> wires(circuit.nodes().size());
-  std::size_t private_index = 0, public_index = 0, product_index = 0;
+  const auto& circuit = prepared.circuit();
+  const auto& layout = prepared.layout();
+  std::vector<ParameterizedProverWire<Ops>> wires(prepared.traversal().size());
   const auto zero = Ops::zero();
-  for (std::size_t i = 0; i != circuit.nodes().size(); ++i) {
-    const auto& node = circuit.nodes()[i];
+  for (std::size_t i = 0; i != prepared.traversal().size(); ++i) {
+    const auto& node = prepared.traversal()[i];
     switch (node.op) {
     case Op::Constant: wires[i].value = node.constant; break;
     case Op::PrivateInput:
-      wires[i].value = witness.private_inputs[private_index];
-      wires[i].tag = tags[private_index++];
+      wires[i].value = witness.private_inputs[node.value_index];
+      wires[i].tag = tags[node.value_index];
       break;
-    case Op::PublicInput: wires[i].value = public_inputs[public_index++]; break;
+    case Op::PublicInput: wires[i].value = public_inputs[node.value_index]; break;
     case Op::Xor:
       wires[i].value = wires[node.lhs].value != wires[node.rhs].value;
       wires[i].tag = field_add<Ops>(wires[node.lhs].tag, wires[node.rhs].tag);
       break;
     case Op::And: {
-      wires[i].value = witness.multiplication_outputs[product_index];
-      wires[i].tag = tags[layout.private_input_bits + product_index++];
+      wires[i].value = witness.multiplication_outputs[node.value_index];
+      wires[i].tag = tags[layout.private_input_bits + node.value_index];
       const auto degree0 = field_multiply<Ops>(wires[node.lhs].tag, wires[node.rhs].tag);
       auto degree1 = wires[i].tag;
       typename Ops::Field term;
@@ -331,25 +346,27 @@ void parameterized_prover_constraints(
 
 template<class Ops>
 void parameterized_verifier_constraints(
-    const BinaryCircuit& circuit, std::span<const std::uint8_t> public_inputs,
+    const PreparedBinaryCircuit& prepared, std::span<const std::uint8_t> public_inputs,
     std::span<const std::uint8_t> expected_outputs,
     const std::vector<typename Ops::Field>& keys,
     const typename Ops::Field& delta, const typename Ops::Field& delta_squared,
     typename Ops::VerifierHash* hasher) {
-  const auto layout = witness_layout(circuit);
-  std::vector<ParameterizedVerifierWire<Ops>> wires(circuit.nodes().size());
-  std::size_t private_index = 0, public_index = 0, product_index = 0;
-  for (std::size_t i = 0; i != circuit.nodes().size(); ++i) {
-    const auto& node = circuit.nodes()[i];
+  const auto& circuit = prepared.circuit();
+  const auto& layout = prepared.layout();
+  std::vector<ParameterizedVerifierWire<Ops>> wires(prepared.traversal().size());
+  for (std::size_t i = 0; i != prepared.traversal().size(); ++i) {
+    const auto& node = prepared.traversal()[i];
     switch (node.op) {
     case Op::Constant: wires[i].key = node.constant ? delta : Ops::zero(); break;
-    case Op::PrivateInput: wires[i].key = keys[private_index++]; break;
-    case Op::PublicInput: wires[i].key = public_inputs[public_index++] ? delta : Ops::zero(); break;
+    case Op::PrivateInput: wires[i].key = keys[node.value_index]; break;
+    case Op::PublicInput:
+      wires[i].key = public_inputs[node.value_index] ? delta : Ops::zero();
+      break;
     case Op::Xor:
       wires[i].key = field_add<Ops>(wires[node.lhs].key, wires[node.rhs].key);
       break;
     case Op::And: {
-      wires[i].key = keys[layout.private_input_bits + product_index++];
+      wires[i].key = keys[layout.private_input_bits + node.value_index];
       auto evaluation = field_multiply<Ops>(wires[node.lhs].key, wires[node.rhs].key);
       const auto delta_z = field_multiply<Ops>(delta, wires[i].key);
       Ops::add_inplace(&evaluation, &delta_z);
@@ -371,7 +388,7 @@ void parameterized_verifier_constraints(
 
 template<class Ops>
 ParameterizedQuicksilverProof parameterized_quicksilver_prove_impl(
-    const BinaryCircuit& circuit, const PackedWitness& packed,
+    const PreparedBinaryCircuit& circuit, const PackedWitness& packed,
     std::span<const std::uint8_t> public_inputs,
     std::span<const std::uint8_t> expected_outputs,
     const std::vector<std::uint8_t*>& v_columns,
@@ -380,8 +397,8 @@ ParameterizedQuicksilverProof parameterized_quicksilver_prove_impl(
   if (challenge_2.size() != 3 * Ops::bytes + 8)
     throw std::invalid_argument("wrong QuickSilver challenge size");
   check_statement_sizes(circuit, public_inputs, expected_outputs);
-  const auto layout = witness_layout(circuit);
-  const auto witness = unpack_witness(circuit, packed);
+  const auto& layout = circuit.layout();
+  const auto witness = circuit.unpack_witness(packed);
   auto tags = parameterized_columns_to_rows<Ops>(v_columns, layout.vole_bits + 2 * Ops::bits);
   typename Ops::Field u0, u1, v0, v1;
   Ops::sum_poly_bits(&u0, u_after_witness);
@@ -403,7 +420,7 @@ ParameterizedQuicksilverProof parameterized_quicksilver_prove_impl(
 
 template<class Ops>
 std::vector<std::uint8_t> parameterized_quicksilver_verify_impl(
-    const BinaryCircuit& circuit, const PackedWitness& masked,
+    const PreparedBinaryCircuit& circuit, const PackedWitness& masked,
     std::span<const std::uint8_t> public_inputs,
     std::span<const std::uint8_t> expected_outputs,
     const std::vector<std::uint8_t*>& q_columns,
@@ -415,7 +432,7 @@ std::vector<std::uint8_t> parameterized_quicksilver_verify_impl(
       proof.a2.size() != Ops::bytes)
     throw std::invalid_argument("wrong parameterized QuickSilver field size");
   check_statement_sizes(circuit, public_inputs, expected_outputs);
-  const auto layout = witness_layout(circuit);
+  const auto& layout = circuit.layout();
   if (masked.size() != layout.vole_bytes) throw std::invalid_argument("wrong masked witness size");
   typename Ops::Field delta;
   Ops::load(&delta, delta_bytes.data());
@@ -453,7 +470,7 @@ std::vector<std::uint8_t> parameterized_quicksilver_verify_impl(
 } // namespace
 
 ParameterizedQuicksilverProof quicksilver_prove(
-    SecurityLevel security, const BinaryCircuit& circuit,
+    SecurityLevel security, const PreparedBinaryCircuit& circuit,
     const PackedWitness& witness, std::span<const std::uint8_t> public_inputs,
     std::span<const std::uint8_t> expected_outputs,
     const std::vector<std::uint8_t*>& v_columns,
@@ -476,8 +493,21 @@ ParameterizedQuicksilverProof quicksilver_prove(
   throw std::invalid_argument("unsupported QuickSilver security level");
 }
 
-std::vector<std::uint8_t> quicksilver_verify(
+ParameterizedQuicksilverProof quicksilver_prove(
     SecurityLevel security, const BinaryCircuit& circuit,
+    const PackedWitness& witness, std::span<const std::uint8_t> public_inputs,
+    std::span<const std::uint8_t> expected_outputs,
+    const std::vector<std::uint8_t*>& v_columns,
+    const std::uint8_t* u_after_witness,
+    std::span<const std::uint8_t> challenge_2) {
+  const PreparedBinaryCircuit prepared(circuit);
+  return quicksilver_prove(security, prepared, witness, public_inputs,
+                           expected_outputs, v_columns, u_after_witness,
+                           challenge_2);
+}
+
+std::vector<std::uint8_t> quicksilver_verify(
+    SecurityLevel security, const PreparedBinaryCircuit& circuit,
     const PackedWitness& masked_witness,
     std::span<const std::uint8_t> public_inputs,
     std::span<const std::uint8_t> expected_outputs,
@@ -500,6 +530,21 @@ std::vector<std::uint8_t> quicksilver_verify(
         delta, challenge_2, proof);
   }
   throw std::invalid_argument("unsupported QuickSilver security level");
+}
+
+std::vector<std::uint8_t> quicksilver_verify(
+    SecurityLevel security, const BinaryCircuit& circuit,
+    const PackedWitness& masked_witness,
+    std::span<const std::uint8_t> public_inputs,
+    std::span<const std::uint8_t> expected_outputs,
+    const std::vector<std::uint8_t*>& q_columns,
+    std::span<const std::uint8_t> delta,
+    std::span<const std::uint8_t> challenge_2,
+    const ParameterizedQuicksilverProof& proof) {
+  const PreparedBinaryCircuit prepared(circuit);
+  return quicksilver_verify(security, prepared, masked_witness, public_inputs,
+                            expected_outputs, q_columns, delta, challenge_2,
+                            proof);
 }
 
 } // namespace vole_backend

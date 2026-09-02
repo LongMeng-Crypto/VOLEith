@@ -260,6 +260,41 @@ BOOST_AUTO_TEST_CASE(parameterized_faest_vole_layouts) {
   }
 }
 
+BOOST_AUTO_TEST_CASE(prepared_circuit_caches_and_preserves_results) {
+  const auto circuit = example_circuit();
+  const vole_backend::PreparedBinaryCircuit prepared(circuit);
+  BOOST_TEST(prepared.statistics().total_nodes == circuit.statistics().total_nodes);
+  BOOST_TEST(prepared.layout().vole_bits == vole_backend::witness_layout(circuit).vole_bits);
+  BOOST_TEST(prepared.canonical_hash() == vole_backend::circuit_hash(circuit));
+  BOOST_TEST(prepared.traversal().size() == circuit.nodes().size());
+  BOOST_TEST(prepared.identifier(vole_backend::SecurityLevel::Bits128).size() == 32U);
+  BOOST_TEST(prepared.identifier(vole_backend::SecurityLevel::Bits192).size() == 48U);
+  BOOST_TEST(prepared.identifier(vole_backend::SecurityLevel::Bits256).size() == 64U);
+
+  const std::array<std::uint8_t, 2> private_inputs = {1, 0};
+  const vole_backend::PublicStatement statement{{1}, {1}};
+  const auto evaluation = prepared.evaluate(private_inputs, statement.public_inputs);
+  BOOST_TEST(evaluation.outputs == statement.expected_outputs);
+  BOOST_TEST(prepared.build_witness(private_inputs, evaluation) ==
+             vole_backend::build_witness(circuit, private_inputs,
+                                         statement.public_inputs));
+
+  const std::array<std::uint8_t, 11> context = {
+      'p','r','e','p','a','r','e','d','-','v','1'};
+  vole_backend::ProverRandomness randomness{};
+  randomness.fill(0x29);
+  const auto direct = vole_backend::prove(
+      circuit, vole_backend::SecurityLevel::Bits128, private_inputs,
+      statement, context, randomness);
+  const auto cached = vole_backend::prove(
+      prepared, vole_backend::SecurityLevel::Bits128, private_inputs,
+      statement, context, randomness);
+  BOOST_TEST(cached == direct);
+  BOOST_TEST(vole_backend::verify(
+      prepared, vole_backend::SecurityLevel::Bits128, statement, context,
+      cached));
+}
+
 BOOST_AUTO_TEST_CASE(legacy_128_binary_proof_remains_verifiable) {
   const auto circuit = example_circuit();
   const LegacyTestRelation legacy(circuit);

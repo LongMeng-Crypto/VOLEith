@@ -9,6 +9,12 @@
 #include "fields.h"
 #include "utils.h"
 
+#if (defined(__i386__) || defined(__x86_64__)) && \
+    (defined(__GNUC__) || defined(__clang__))
+#include <wmmintrin.h>
+#define FAEST_HAVE_RUNTIME_PCLMUL 1
+#endif
+
 // GF(2^8) with X^8 + X^4 + X^3 + X^1 + 1
 #define bf8_modulus (UINT8_C((1 << 4) | (1 << 3) | (1 << 1) | 1))
 // GF(2^64) with X^64 + X^4 + X^3 + X^1 + 1
@@ -29,6 +35,50 @@
 #define U64C(x0, x1, x2, x3, x4, x5, x6, x7)                                                       \
   ((UINT64_C(x7) << 56) | (UINT64_C(x6) << 48) | (UINT64_C(x5) << 40) | (UINT64_C(x4) << 32) |     \
    (UINT64_C(x3) << 24) | (UINT64_C(x2) << 16) | (UINT64_C(x1) << 8) | UINT64_C(x0))
+
+/*
+ * Carry-less schoolbook multiplication followed by reduction modulo
+ * x^(64*n) + modulus.  Every supported modulus has degree below 64, so a
+ * descending limb pass is sufficient.  The loop bounds and memory accesses
+ * depend only on public field sizes; this remains constant-time with respect
+ * to all field values.
+ */
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+ATTR_TARGET_PCLMUL
+static void bf_clmul_reduce(uint64_t* dst, const uint64_t* lhs, size_t lhs_words,
+                            const uint64_t* rhs, size_t rhs_words,
+                            size_t field_words, uint64_t modulus) {
+  uint64_t product[24] = {0};
+  for (size_t i = 0; i != lhs_words; ++i) {
+    for (size_t j = 0; j != rhs_words; ++j) {
+      const __m128i a = _mm_set_epi64x(0, (long long)lhs[i]);
+      const __m128i b = _mm_set_epi64x(0, (long long)rhs[j]);
+      const __m128i p = _mm_clmulepi64_si128(a, b, 0x00);
+      uint64_t limbs[2];
+      _mm_storeu_si128((__m128i*)limbs, p);
+      product[i + j] ^= limbs[0];
+      product[i + j + 1] ^= limbs[1];
+    }
+  }
+
+  for (size_t i = lhs_words + rhs_words; i-- > field_words;) {
+    const uint64_t high = product[i];
+    const __m128i a = _mm_set_epi64x(0, (long long)high);
+    const __m128i b = _mm_set_epi64x(0, (long long)modulus);
+    const __m128i p = _mm_clmulepi64_si128(a, b, 0x00);
+    uint64_t reduced[2];
+    _mm_storeu_si128((__m128i*)reduced, p);
+    product[i] = 0;
+    product[i - field_words] ^= reduced[0];
+    product[i - field_words + 1] ^= reduced[1];
+  }
+  for (size_t i = 0; i != field_words; ++i) dst[i] = product[i];
+}
+
+static bool bf_runtime_has_pclmul(void) {
+  return __builtin_cpu_supports("pclmul");
+}
+#endif
 
 ATTR_CONST uint8_t bits_sq(uint8_t x) {
   return set_bit(get_bit(x, 0) ^ get_bit(x, 4) ^ get_bit(x, 6), 0) |
@@ -459,6 +509,21 @@ bf192_bit_to_uint64_mask(const bf192_t* value, unsigned int bit) {
 }
 
 void bf192_mul(bf192_t* dst, const bf192_t* lhs, const bf192_t* rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    const uint64_t a[3] = {BF_VALUE(*lhs, 0), BF_VALUE(*lhs, 1), BF_VALUE(*lhs, 2)};
+    const uint64_t b[3] = {BF_VALUE(*rhs, 0), BF_VALUE(*rhs, 1), BF_VALUE(*rhs, 2)};
+    uint64_t result[3];
+    bf_clmul_reduce(result, a, 3, b, 3, 3, bf192_modulus);
+    BF_VALUE(*dst, 0) = result[0];
+    BF_VALUE(*dst, 1) = result[1];
+    BF_VALUE(*dst, 2) = result[2];
+#if defined(HAVE_ATTR_VECTOR_SIZE)
+    BF_VALUE(*dst, 3) = 0;
+#endif
+    return;
+  }
+#endif
   bf192_t tmp = *lhs;
   bf192_and_64(dst, lhs, bf192_bit_to_uint64_mask(rhs, 0));
   for (unsigned int idx = 1; idx != 192; ++idx) {
@@ -473,6 +538,21 @@ void bf192_mul(bf192_t* dst, const bf192_t* lhs, const bf192_t* rhs) {
 }
 
 void bf192_mul_inplace(bf192_t* lhs, const bf192_t* rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    const uint64_t a[3] = {BF_VALUE(*lhs, 0), BF_VALUE(*lhs, 1), BF_VALUE(*lhs, 2)};
+    const uint64_t b[3] = {BF_VALUE(*rhs, 0), BF_VALUE(*rhs, 1), BF_VALUE(*rhs, 2)};
+    uint64_t result[3];
+    bf_clmul_reduce(result, a, 3, b, 3, 3, bf192_modulus);
+    BF_VALUE(*lhs, 0) = result[0];
+    BF_VALUE(*lhs, 1) = result[1];
+    BF_VALUE(*lhs, 2) = result[2];
+#if defined(HAVE_ATTR_VECTOR_SIZE)
+    BF_VALUE(*lhs, 3) = 0;
+#endif
+    return;
+  }
+#endif
   bf192_t tmp = *lhs;
   bf192_and_64(lhs, lhs, bf192_bit_to_uint64_mask(rhs, 0));
   for (unsigned int idx = 1; idx != 192; ++idx) {
@@ -487,6 +567,20 @@ void bf192_mul_inplace(bf192_t* lhs, const bf192_t* rhs) {
 }
 
 void bf192_mul_64_inplace(bf192_t* lhs, bf64_t rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    const uint64_t a[3] = {BF_VALUE(*lhs, 0), BF_VALUE(*lhs, 1), BF_VALUE(*lhs, 2)};
+    uint64_t result[3];
+    bf_clmul_reduce(result, a, 3, &rhs, 1, 3, bf192_modulus);
+    BF_VALUE(*lhs, 0) = result[0];
+    BF_VALUE(*lhs, 1) = result[1];
+    BF_VALUE(*lhs, 2) = result[2];
+#if defined(HAVE_ATTR_VECTOR_SIZE)
+    BF_VALUE(*lhs, 3) = 0;
+#endif
+    return;
+  }
+#endif
   bf192_t tmp = *lhs;
   bf192_and_64(lhs, lhs, bf64_bit_to_mask(rhs, 0));
   for (unsigned int idx = 1; idx != 64; ++idx) {
@@ -689,6 +783,18 @@ bf256_bit_to_uint64_mask(const bf256_t* value, unsigned int bit) {
 }
 
 void bf256_mul(bf256_t* dst, const bf256_t* lhs, const bf256_t* rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    const uint64_t a[4] = {BF_VALUE(*lhs, 0), BF_VALUE(*lhs, 1),
+                           BF_VALUE(*lhs, 2), BF_VALUE(*lhs, 3)};
+    const uint64_t b[4] = {BF_VALUE(*rhs, 0), BF_VALUE(*rhs, 1),
+                           BF_VALUE(*rhs, 2), BF_VALUE(*rhs, 3)};
+    uint64_t result[4];
+    bf_clmul_reduce(result, a, 4, b, 4, 4, bf256_modulus);
+    for (size_t i = 0; i != 4; ++i) BF_VALUE(*dst, i) = result[i];
+    return;
+  }
+#endif
 #if defined(HAVE_ATTR_VECTOR_SIZE)
   const bf256_t mod = BF256C(bf256_modulus, 0, 0, 0);
 #endif
@@ -710,6 +816,18 @@ void bf256_mul(bf256_t* dst, const bf256_t* lhs, const bf256_t* rhs) {
 }
 
 void bf256_mul_inplace(bf256_t* lhs, const bf256_t* rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    const uint64_t a[4] = {BF_VALUE(*lhs, 0), BF_VALUE(*lhs, 1),
+                           BF_VALUE(*lhs, 2), BF_VALUE(*lhs, 3)};
+    const uint64_t b[4] = {BF_VALUE(*rhs, 0), BF_VALUE(*rhs, 1),
+                           BF_VALUE(*rhs, 2), BF_VALUE(*rhs, 3)};
+    uint64_t result[4];
+    bf_clmul_reduce(result, a, 4, b, 4, 4, bf256_modulus);
+    for (size_t i = 0; i != 4; ++i) BF_VALUE(*lhs, i) = result[i];
+    return;
+  }
+#endif
 #if defined(HAVE_ATTR_VECTOR_SIZE)
   const bf256_t mod = BF256C(bf256_modulus, 0, 0, 0);
 #endif
@@ -732,6 +850,16 @@ void bf256_mul_inplace(bf256_t* lhs, const bf256_t* rhs) {
 }
 
 void bf256_mul_64_inplace(bf256_t* lhs, bf64_t rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    const uint64_t a[4] = {BF_VALUE(*lhs, 0), BF_VALUE(*lhs, 1),
+                           BF_VALUE(*lhs, 2), BF_VALUE(*lhs, 3)};
+    uint64_t result[4];
+    bf_clmul_reduce(result, a, 4, &rhs, 1, 4, bf256_modulus);
+    for (size_t i = 0; i != 4; ++i) BF_VALUE(*lhs, i) = result[i];
+    return;
+  }
+#endif
 #if defined(HAVE_ATTR_VECTOR_SIZE)
   const bf256_t mod = BF256C(bf256_modulus, 0, 0, 0);
 #endif
@@ -970,6 +1098,19 @@ bf576_bit_to_uint64_mask(const bf576_t* value, unsigned int bit) {
 #endif
 
 void bf576_mul_192_inplace(bf576_t* lhs, const bf192_t* rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    uint64_t a[9], b[3], result[9];
+    uint8_t lhs_bytes[BF576_NUM_BYTES], result_bytes[BF576_NUM_BYTES];
+    bf576_store(lhs_bytes, lhs);
+    for (size_t i = 0; i != 9; ++i) a[i] = bf64_load(lhs_bytes + 8 * i);
+    for (size_t i = 0; i != 3; ++i) b[i] = BF_VALUE(*rhs, i);
+    bf_clmul_reduce(result, a, 9, b, 3, 9, bf576_modulus);
+    for (size_t i = 0; i != 9; ++i) bf64_store(result_bytes + 8 * i, result[i]);
+    bf576_load(lhs, result_bytes);
+    return;
+  }
+#endif
 #if defined(HAVE_ATTR_VECTOR_SIZE)
   const bf192_t mod = BF192C(bf576_modulus, 0, 0);
 #endif
@@ -1075,6 +1216,19 @@ bf768_bit_to_uint64_mask(const bf768_t* value, unsigned int bit) {
 #endif
 
 void bf768_mul_256_inplace(bf768_t* lhs, const bf256_t* rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    uint64_t a[12], b[4], result[12];
+    uint8_t lhs_bytes[BF768_NUM_BYTES], result_bytes[BF768_NUM_BYTES];
+    bf768_store(lhs_bytes, lhs);
+    for (size_t i = 0; i != 12; ++i) a[i] = bf64_load(lhs_bytes + 8 * i);
+    for (size_t i = 0; i != 4; ++i) b[i] = BF_VALUE(*rhs, i);
+    bf_clmul_reduce(result, a, 12, b, 4, 12, bf768_modulus);
+    for (size_t i = 0; i != 12; ++i) bf64_store(result_bytes + 8 * i, result[i]);
+    bf768_load(lhs, result_bytes);
+    return;
+  }
+#endif
 #if defined(HAVE_ATTR_VECTOR_SIZE)
   const bf256_t mod = BF256C(bf768_modulus, 0, 0, 0);
 #endif

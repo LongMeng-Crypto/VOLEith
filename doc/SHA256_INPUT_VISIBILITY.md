@@ -1,10 +1,10 @@
 # SHA-256 input visibility layouts
 
-The SHA-256 frontend can classify every message bit independently as a secret
-or public input. This is a frontend feature over the generic `BinaryCircuit`
-IR: secret positions generate `PrivateInput` nodes and public positions
-generate `PublicInput` nodes. Padding and the 256 digest outputs remain public
-and unchanged.
+The shared SHA-2 visibility component can classify every message bit
+independently as a secret or public input. SHA-256, SHA-384, and SHA-512 all
+use this component over the generic `BinaryCircuit` IR: secret positions
+generate `PrivateInput` nodes and public positions generate `PublicInput`
+nodes. Padding and digest outputs remain public and unchanged.
 
 ## Range syntax
 

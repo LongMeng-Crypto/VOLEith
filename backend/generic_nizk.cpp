@@ -312,7 +312,6 @@ namespace parameterized_nizk {
 namespace {
 
 constexpr char parameterized_domain[] = "VOLE-BINARY-CIRCUIT-NIZK-v2";
-constexpr char circuit_id_domain[] = "VOLE-BINARY-CIRCUIT-ID-v2";
 
 struct Fields {
   std::vector<std::uint8_t> corrections;
@@ -330,11 +329,11 @@ std::array<std::uint8_t, 8> magic(SecurityLevel security) {
   return {'V', 'B', 'C', 'Z', 'K', 2, security_level_code(security), 0};
 }
 
-bool valid_statement(const BinaryCircuit& circuit, const PublicStatement& statement) {
-  const auto stats = circuit.statistics();
+bool valid_statement(const PreparedBinaryCircuit& circuit, const PublicStatement& statement) {
+  const auto& stats = circuit.statistics();
   const auto valid_bit = [](std::uint8_t bit) { return bit <= 1; };
   return statement.public_inputs.size() == stats.public_inputs &&
-         statement.expected_outputs.size() == circuit.outputs().size() &&
+         statement.expected_outputs.size() == circuit.circuit().outputs().size() &&
          std::all_of(statement.public_inputs.begin(), statement.public_inputs.end(), valid_bit) &&
          std::all_of(statement.expected_outputs.begin(), statement.expected_outputs.end(), valid_bit);
 }
@@ -346,33 +345,14 @@ void domain_update(H2_context_t* hash, SecurityLevel security) {
   H2_update(hash, &code, 1);
 }
 
-std::vector<std::uint8_t> circuit_identifier(const BinaryCircuit& circuit,
-                                             SecurityLevel security) {
-  const auto& parameters = security_parameters(security);
-  const auto encoded = serialize_vbc(circuit);
-  if (encoded.size() > std::numeric_limits<std::uint32_t>::max())
-    throw std::invalid_argument("circuit encoding too large");
-  H2_context_t hash;
-  H2_init(&hash, parameters.lambda_bits);
-  H2_update(&hash, reinterpret_cast<const std::uint8_t*>(circuit_id_domain),
-            sizeof(circuit_id_domain) - 1);
-  const auto code = security_level_code(security);
-  H2_update(&hash, &code, 1);
-  H2_update_u32_le(&hash, static_cast<std::uint32_t>(encoded.size()));
-  H2_update(&hash, encoded.data(), encoded.size());
-  std::vector<std::uint8_t> result(2 * parameters.lambda_bytes);
-  H2_0_final(&hash, result.data(), result.size());
-  return result;
-}
-
 std::vector<std::uint8_t> statement_hash(
-    const BinaryCircuit& circuit, SecurityLevel security,
+    const PreparedBinaryCircuit& circuit, SecurityLevel security,
     const PublicStatement& statement, std::span<const std::uint8_t> context) {
   if (!valid_statement(circuit, statement)) throw std::invalid_argument("invalid public statement");
   if (context.size() > std::numeric_limits<std::uint32_t>::max())
     throw std::invalid_argument("context too long");
   const auto& parameters = security_parameters(security);
-  const auto id = circuit_identifier(circuit, security);
+  const auto id = circuit.identifier(security);
   H2_context_t hash;
   H2_init(&hash, parameters.lambda_bits);
   domain_update(&hash, security);
@@ -485,16 +465,16 @@ bool grinding(SecurityLevel security, std::span<const std::uint8_t> challenge) {
   return true;
 }
 
-std::size_t proof_bytes(const BinaryCircuit& circuit, SecurityLevel security) {
+std::size_t proof_bytes(const PreparedBinaryCircuit& circuit, SecurityLevel security) {
   const auto& parameters = security_parameters(security);
-  const auto witness_bits = witness_layout(circuit).vole_bits;
+  const auto witness_bits = circuit.layout().vole_bits;
   const auto vole = vole_layout(witness_bits, security);
   return magic(security).size() + vole.correction_bytes + parameters.utilde_bytes() +
          (witness_bits + 7) / 8 + 2 * parameters.lambda_bytes +
          vole_opening_size(security) + parameters.lambda_bytes + 16 + 4;
 }
 
-std::vector<std::uint8_t> serialize(const BinaryCircuit& circuit,
+std::vector<std::uint8_t> serialize(const PreparedBinaryCircuit& circuit,
                                     SecurityLevel security, const Fields& fields) {
   std::vector<std::uint8_t> out;
   out.reserve(proof_bytes(circuit, security));
@@ -517,10 +497,10 @@ std::vector<std::uint8_t> serialize(const BinaryCircuit& circuit,
   return out;
 }
 
-bool deserialize(const BinaryCircuit& circuit, SecurityLevel security,
+bool deserialize(const PreparedBinaryCircuit& circuit, SecurityLevel security,
                  std::span<const std::uint8_t> input, Fields& fields) {
   const auto& parameters = security_parameters(security);
-  const auto witness_bits = witness_layout(circuit).vole_bits;
+  const auto witness_bits = circuit.layout().vole_bits;
   const auto vole = vole_layout(witness_bits, security);
   const auto expected_magic = magic(security);
   if (input.size() != proof_bytes(circuit, security) ||
@@ -554,12 +534,12 @@ bool deserialize(const BinaryCircuit& circuit, SecurityLevel security,
 
 } // namespace
 
-std::size_t serialized_proof_bytes(const BinaryCircuit& circuit,
+std::size_t serialized_proof_bytes(const PreparedBinaryCircuit& circuit,
                                    SecurityLevel security) {
   return proof_bytes(circuit, security);
 }
 
-std::vector<std::uint8_t> prove(const BinaryCircuit& circuit,
+std::vector<std::uint8_t> prove(const PreparedBinaryCircuit& circuit,
                                 SecurityLevel security,
                                 std::span<const std::uint8_t> private_inputs,
                                 const PublicStatement& statement,
@@ -569,8 +549,8 @@ std::vector<std::uint8_t> prove(const BinaryCircuit& circuit,
   const auto evaluation = circuit.evaluate(private_inputs, statement.public_inputs);
   if (evaluation.outputs != statement.expected_outputs)
     throw std::invalid_argument("private input does not satisfy outputs");
-  const auto witness = build_witness(circuit, private_inputs, statement.public_inputs);
-  const auto witness_bits = witness_layout(circuit).vole_bits;
+  const auto witness = circuit.build_witness(private_inputs, evaluation);
+  const auto witness_bits = circuit.layout().vole_bits;
   if (witness.size() != (witness_bits + 7) / 8)
     throw std::logic_error("binary relation returned wrong witness size");
   const auto& parameters = security_parameters(security);
@@ -615,14 +595,14 @@ std::vector<std::uint8_t> prove(const BinaryCircuit& circuit,
   return serialize(circuit, security, fields);
 }
 
-bool verify(const BinaryCircuit& circuit, SecurityLevel security,
+bool verify(const PreparedBinaryCircuit& circuit, SecurityLevel security,
             const PublicStatement& statement,
             std::span<const std::uint8_t> context,
             std::span<const std::uint8_t> proof) {
   try {
     if (!valid_statement(circuit, statement)) return false;
     const auto& parameters = security_parameters(security);
-    const auto witness_bits = witness_layout(circuit).vole_bits;
+    const auto witness_bits = circuit.layout().vole_bits;
     Fields fields;
     if (!deserialize(circuit, security, proof, fields) ||
         !grinding(security, fields.challenge_3))
@@ -667,6 +647,12 @@ bool verify(const BinaryCircuit& circuit, SecurityLevel security,
 
 std::size_t serialized_proof_bytes(const BinaryCircuit& circuit,
                                    SecurityLevel security) {
+  const PreparedBinaryCircuit prepared(circuit);
+  return serialized_proof_bytes(prepared, security);
+}
+
+std::size_t serialized_proof_bytes(const PreparedBinaryCircuit& circuit,
+                                   SecurityLevel security) {
   return parameterized_nizk::serialized_proof_bytes(circuit, security);
 }
 
@@ -675,6 +661,17 @@ std::size_t serialized_proof_bytes(const BinaryCircuit& circuit) {
 }
 
 std::vector<std::uint8_t> prove(const BinaryCircuit& circuit,
+                                SecurityLevel security,
+                                std::span<const std::uint8_t> private_inputs,
+                                const PublicStatement& statement,
+                                std::span<const std::uint8_t> context,
+                                const ProverRandomness& randomness) {
+  const PreparedBinaryCircuit prepared(circuit);
+  return prove(prepared, security, private_inputs, statement, context,
+               randomness);
+}
+
+std::vector<std::uint8_t> prove(const PreparedBinaryCircuit& circuit,
                                 SecurityLevel security,
                                 std::span<const std::uint8_t> private_inputs,
                                 const PublicStatement& statement,
@@ -697,10 +694,18 @@ bool verify(const BinaryCircuit& circuit, SecurityLevel security,
             const PublicStatement& statement,
             std::span<const std::uint8_t> context,
             std::span<const std::uint8_t> proof) {
+  const PreparedBinaryCircuit prepared(circuit);
+  return verify(prepared, security, statement, context, proof);
+}
+
+bool verify(const PreparedBinaryCircuit& circuit, SecurityLevel security,
+            const PublicStatement& statement,
+            std::span<const std::uint8_t> context,
+            std::span<const std::uint8_t> proof) {
   if (parameterized_nizk::verify(circuit, security, statement, context, proof))
     return true;
   if (security != SecurityLevel::Bits128) return false;
-  const LegacyBinaryRelation legacy(circuit);
+  const LegacyBinaryRelation legacy(circuit.circuit());
   return verify(static_cast<const QuicksilverRelation&>(legacy), statement,
                 context, proof);
 }
