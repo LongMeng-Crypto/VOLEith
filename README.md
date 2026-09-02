@@ -106,10 +106,10 @@ The strict JSON compiler format is documented in
 implementation files live under `backend/`; SHA-256 and AES-128 are independent
 frontends under `circuits/sha256/` and `circuits/aes/`.
 
-`vole_aes/` is a local experiment workspace with reproducible commands for the
-two AES frontends. Generated `.vbc`, `.vqir`, and `.proof` files are deliberately
-not versioned. A pre-refactor local `vole_sha256/` directory may exist in an old
-working tree, but it is not part of the current source layout.
+`vole_sha256/` and `vole_aes/` are symmetric experiment workspaces containing
+reproducible commands for their frontends. Generated `.vbc`, `.vqir`, `.proof`,
+and build files are deliberately not versioned; authoritative frontend sources
+remain under `circuits/`.
 
 To benchmark fresh random printable secrets and print every secret,
 public digest, prover/verifier time and proof size:
