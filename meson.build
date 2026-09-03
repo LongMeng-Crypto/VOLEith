@@ -56,23 +56,23 @@ backend_sources = files(
 
 sha256_frontend_sources = files(
   'circuits/common/input_visibility.cpp',
-  'circuits/sha256/faest_quicksilver.cpp',
-  'circuits/sha256/nizk.cpp',
-  'circuits/sha256/sha256_circuit.cpp',
-  'circuits/sha256/witness.cpp',
+  'circuits/sha2/sha256/faest_quicksilver.cpp',
+  'circuits/sha2/sha256/nizk.cpp',
+  'circuits/sha2/sha256/sha256_circuit.cpp',
+  'circuits/sha2/sha256/witness.cpp',
 )
 
 sha2_64_frontend_sources = files(
-  'circuits/sha2/sha512_family.cpp',
-  'circuits/sha2/sha384_circuit.cpp',
-  'circuits/sha2/sha512_circuit.cpp',
+  'circuits/sha2/sha512_family/sha512_family.cpp',
+  'circuits/sha2/sha512_family/sha384_circuit.cpp',
+  'circuits/sha2/sha512_family/sha512_circuit.cpp',
 )
 
 aes_frontend_sources = files(
   'circuits/aes/aes128_faest_circuit.cpp',
 )
 
-project_includes = include_directories('.', 'backend', 'backend/vole', 'circuits/sha256')
+project_includes = include_directories('.', 'backend', 'backend/vole', 'circuits/sha2/sha256')
 
 vole_sha256_lib = static_library(
   'vole_sha256',

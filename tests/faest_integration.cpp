@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 
-#include "../circuits/sha256/faest_quicksilver.hpp"
+#include "../circuits/sha2/sha256/faest_quicksilver.hpp"
 #include "../backend/vole/faest_vole.hpp"
-#include "../circuits/sha256/witness.hpp"
+#include "../circuits/sha2/sha256/witness.hpp"
 
 #include <boost/test/unit_test.hpp>
 

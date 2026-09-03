@@ -1,7 +1,7 @@
 # SHA-256 experiment workspace
 
 This directory holds locally generated SHA-256 circuits and proofs. The
-authoritative frontend sources remain in `circuits/sha256/`, while the generic
+authoritative frontend sources remain in `circuits/sha2/sha256/`, while the generic
 VOLE-in-the-head backend remains in `backend/`. Generated binary artifacts and
 build directories are ignored by Git and can be reproduced with the commands
 below.

@@ -9,8 +9,8 @@ et  = F(sk || gid)
 hk  = F(s  || et)
 ```
 
-The reusable frontend sources live under `circuits/sha256/` and
-`circuits/sha2/`; the generic proof backend lives under `backend/`. Generated
+The reusable frontend sources live under `circuits/sha2/sha256/` and
+`circuits/sha2/sha512_family/`; the generic proof backend lives under `backend/`. Generated
 `.vbc` and `.proof` files are intentionally not versioned.
 
 The current individual DAA-shaped SHA-384 and SHA-512 circuits can be exported

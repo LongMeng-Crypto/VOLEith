@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 
-#include "../circuits/sha256/sha256_circuit.hpp"
+#include "../circuits/sha2/sha256/sha256_circuit.hpp"
 #include "../backend/circuit_format.hpp"
 #include "../backend/generic_nizk.hpp"
 

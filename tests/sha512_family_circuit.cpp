@@ -2,8 +2,8 @@
 
 #include "../backend/circuit_format.hpp"
 #include "../backend/generic_nizk.hpp"
-#include "../circuits/sha2/sha384_circuit.hpp"
-#include "../circuits/sha2/sha512_circuit.hpp"
+#include "../circuits/sha2/sha512_family/sha384_circuit.hpp"
+#include "../circuits/sha2/sha512_family/sha512_circuit.hpp"
 
 #include <boost/test/unit_test.hpp>
 #include <openssl/evp.h>

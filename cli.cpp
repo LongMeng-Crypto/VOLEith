@@ -3,11 +3,11 @@
 #include "backend/circuit_format.hpp"
 #include "backend/generic_nizk.hpp"
 #include "backend/json_circuit.hpp"
-#include "circuits/sha256/nizk.hpp"
-#include "circuits/sha256/sha256_circuit.hpp"
-#include "circuits/sha256/witness.hpp"
-#include "circuits/sha2/sha384_circuit.hpp"
-#include "circuits/sha2/sha512_circuit.hpp"
+#include "circuits/sha2/sha256/nizk.hpp"
+#include "circuits/sha2/sha256/sha256_circuit.hpp"
+#include "circuits/sha2/sha256/witness.hpp"
+#include "circuits/sha2/sha512_family/sha384_circuit.hpp"
+#include "circuits/sha2/sha512_family/sha512_circuit.hpp"
 #include "circuits/aes/aes128_faest_circuit.hpp"
 
 #include <openssl/evp.h>
