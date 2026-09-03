@@ -262,17 +262,13 @@ void zk_hash_128_3_init(zk_hash_128_3_ctx* ctx, const uint8_t* sd) {
 
 void zk_hash_128_3_update(zk_hash_128_3_ctx* ctx, const bf128_t* v_0, const bf128_t* v_1,
                           const bf128_t* v_2) {
-  bf128_mul_inplace(&ctx->h0[0], &ctx->s);
+  bf128_mul_3_inplace(ctx->h0, &ctx->s);
+  bf128_mul_64_3_inplace(ctx->h1, ctx->t);
   bf128_add_inplace(&ctx->h0[0], v_0);
-  bf128_mul_64_inplace(&ctx->h1[0], ctx->t);
   bf128_add_inplace(&ctx->h1[0], v_0);
-  bf128_mul_inplace(&ctx->h0[1], &ctx->s);
   bf128_add_inplace(&ctx->h0[1], v_1);
-  bf128_mul_64_inplace(&ctx->h1[1], ctx->t);
   bf128_add_inplace(&ctx->h1[1], v_1);
-  bf128_mul_inplace(&ctx->h0[2], &ctx->s);
   bf128_add_inplace(&ctx->h0[2], v_2);
-  bf128_mul_64_inplace(&ctx->h1[2], ctx->t);
   bf128_add_inplace(&ctx->h1[2], v_2);
 }
 
@@ -357,17 +353,13 @@ void zk_hash_192_3_init(zk_hash_192_3_ctx* ctx, const uint8_t* sd) {
 
 void zk_hash_192_3_update(zk_hash_192_3_ctx* ctx, const bf192_t* v_0, const bf192_t* v_1,
                           const bf192_t* v_2) {
-  bf192_mul_inplace(&ctx->h0[0], &ctx->s);
+  bf192_mul_3_inplace(ctx->h0, &ctx->s);
+  bf192_mul_64_3_inplace(ctx->h1, ctx->t);
   bf192_add_inplace(&ctx->h0[0], v_0);
-  bf192_mul_64_inplace(&ctx->h1[0], ctx->t);
   bf192_add_inplace(&ctx->h1[0], v_0);
-  bf192_mul_inplace(&ctx->h0[1], &ctx->s);
   bf192_add_inplace(&ctx->h0[1], v_1);
-  bf192_mul_64_inplace(&ctx->h1[1], ctx->t);
   bf192_add_inplace(&ctx->h1[1], v_1);
-  bf192_mul_inplace(&ctx->h0[2], &ctx->s);
   bf192_add_inplace(&ctx->h0[2], v_2);
-  bf192_mul_64_inplace(&ctx->h1[2], ctx->t);
   bf192_add_inplace(&ctx->h1[2], v_2);
 }
 
@@ -452,17 +444,13 @@ void zk_hash_256_3_init(zk_hash_256_3_ctx* ctx, const uint8_t* sd) {
 
 void zk_hash_256_3_update(zk_hash_256_3_ctx* ctx, const bf256_t* v_0, const bf256_t* v_1,
                           const bf256_t* v_2) {
-  bf256_mul_inplace(&ctx->h0[0], &ctx->s);
+  bf256_mul_3_inplace(ctx->h0, &ctx->s);
+  bf256_mul_64_3_inplace(ctx->h1, ctx->t);
   bf256_add_inplace(&ctx->h0[0], v_0);
-  bf256_mul_64_inplace(&ctx->h1[0], ctx->t);
   bf256_add_inplace(&ctx->h1[0], v_0);
-  bf256_mul_inplace(&ctx->h0[1], &ctx->s);
   bf256_add_inplace(&ctx->h0[1], v_1);
-  bf256_mul_64_inplace(&ctx->h1[1], ctx->t);
   bf256_add_inplace(&ctx->h1[1], v_1);
-  bf256_mul_inplace(&ctx->h0[2], &ctx->s);
   bf256_add_inplace(&ctx->h0[2], v_2);
-  bf256_mul_64_inplace(&ctx->h1[2], ctx->t);
   bf256_add_inplace(&ctx->h1[2], v_2);
 }
 

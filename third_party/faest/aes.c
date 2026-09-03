@@ -765,6 +765,80 @@ ATTR_TARGET_AESNI_AVX2 static void prg_4_aesni_avx_256(const uint8_t* key, uint8
 #endif
 #endif
 
+#if defined(HAVE_AESNI)
+/*
+ * Long VOLE PRG outputs contain thousands of independent counter blocks.
+ * Interleaving eight AES encryptions removes the per-block AESENC dependency
+ * chain while preserving the exact CTR byte stream.
+ */
+ATTR_TARGET_AESNI static void prg_aesni_batch8(const uint8_t* key, const uint8_t* iv,
+                                               uint8_t* out, unsigned int seclvl,
+                                               size_t outlen) {
+  __m128i rk[AES_ROUNDS_256 + 1];
+  unsigned int rounds;
+  switch (seclvl) {
+  case 256:
+    aes256_expand_key_aesni(rk, key);
+    rounds = AES_ROUNDS_256;
+    break;
+  case 192:
+    aes192_expand_key_aesni(rk, key);
+    rounds = AES_ROUNDS_192;
+    break;
+  default:
+    aes128_expand_key_aesni(rk, key);
+    rounds = AES_ROUNDS_128;
+    break;
+  }
+
+  __m128i counter = _mm_loadu_si128((const __m128i_u*)iv);
+  size_t blocks = outlen / IV_SIZE;
+  while (blocks >= 8) {
+    __m128i lane[8];
+    lane[0] = counter;
+    for (unsigned int i = 1; i != 8; ++i) {
+      lane[i] = sse2_increment_iv(lane[i - 1]);
+    }
+    counter = sse2_increment_iv(lane[7]);
+    for (unsigned int i = 0; i != 8; ++i) {
+      lane[i] = _mm_xor_si128(lane[i], rk[0]);
+    }
+    for (unsigned int round = 1; round != rounds; ++round) {
+      for (unsigned int i = 0; i != 8; ++i) {
+        lane[i] = _mm_aesenc_si128(lane[i], rk[round]);
+      }
+    }
+    for (unsigned int i = 0; i != 8; ++i) {
+      _mm_storeu_si128((__m128i_u*)out + i,
+                       _mm_aesenclast_si128(lane[i], rk[rounds]));
+    }
+    out += 8 * IV_SIZE;
+    blocks -= 8;
+  }
+  while (blocks-- != 0) {
+    __m128i block = _mm_xor_si128(counter, rk[0]);
+    for (unsigned int round = 1; round != rounds; ++round) {
+      block = _mm_aesenc_si128(block, rk[round]);
+    }
+    _mm_storeu_si128((__m128i_u*)out,
+                     _mm_aesenclast_si128(block, rk[rounds]));
+    counter = sse2_increment_iv(counter);
+    out += IV_SIZE;
+  }
+
+  if (outlen % IV_SIZE) {
+    __m128i block = _mm_xor_si128(counter, rk[0]);
+    for (unsigned int round = 1; round != rounds; ++round) {
+      block = _mm_aesenc_si128(block, rk[round]);
+    }
+    uint8_t last_block[IV_SIZE];
+    _mm_storeu_si128((__m128i_u*)last_block,
+                     _mm_aesenclast_si128(block, rk[rounds]));
+    memcpy(out, last_block, outlen % IV_SIZE);
+  }
+}
+#endif
+
 static void generic_prg(const uint8_t* key, uint8_t* internal_iv, uint8_t* out, unsigned int seclvl,
                         size_t outlen) {
   generic_aes_ecb_t ctx;
@@ -798,6 +872,10 @@ void prg(const uint8_t* key, const uint8_t* iv, uint32_t tweak, uint8_t* out, un
 
 #if defined(HAVE_AESNI)
 // use AES-NI if possible
+  if (CPU_SUPPORTS_AESNI && outlen >= 8 * IV_SIZE) {
+    prg_aesni_batch8(key, internal_iv, out, seclvl, outlen);
+    return;
+  }
 #if defined(HAVE_AVX2)
   if (CPU_SUPPORTS_AESNI_AVX2) {
     switch (seclvl) {

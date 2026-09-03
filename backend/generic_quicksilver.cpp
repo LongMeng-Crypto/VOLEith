@@ -20,10 +20,13 @@ std::vector<bf128_t> columns_to_rows(const std::vector<std::uint8_t*>& columns,
                                     std::size_t rows_count) {
   if (columns.size() != lambda_bits) throw std::invalid_argument("wrong VOLE column count");
   std::vector<bf128_t> rows(rows_count);
+  std::vector<std::uint8_t> packed(64 * lambda_bytes);
   for (std::size_t row_base = 0; row_base < rows_count; row_base += 64) {
     const auto block_rows = std::min<std::size_t>(64, rows_count - row_base);
-    std::vector<std::uint8_t> packed(block_rows * lambda_bytes);
-    transpose_column_block(columns, row_base, block_rows, packed, lambda_bytes);
+    transpose_column_block(
+        columns, row_base, block_rows,
+        std::span<std::uint8_t>(packed.data(), block_rows * lambda_bytes),
+        lambda_bytes);
     for (std::size_t row = 0; row != block_rows; ++row)
       bf128_load(&rows[row_base + row], packed.data() + row * lambda_bytes);
   }
@@ -281,10 +284,13 @@ std::vector<typename Ops::Field> parameterized_columns_to_rows(
     const std::vector<std::uint8_t*>& columns, std::size_t rows_count) {
   if (columns.size() != Ops::bits) throw std::invalid_argument("wrong VOLE column count");
   std::vector<typename Ops::Field> rows(rows_count);
+  std::vector<std::uint8_t> packed(64 * Ops::bytes);
   for (std::size_t row_base = 0; row_base < rows_count; row_base += 64) {
     const auto block_rows = std::min<std::size_t>(64, rows_count - row_base);
-    std::vector<std::uint8_t> packed(block_rows * Ops::bytes);
-    transpose_column_block(columns, row_base, block_rows, packed, Ops::bytes);
+    transpose_column_block(
+        columns, row_base, block_rows,
+        std::span<std::uint8_t>(packed.data(), block_rows * Ops::bytes),
+        Ops::bytes);
     for (std::size_t row = 0; row != block_rows; ++row)
       Ops::load(&rows[row_base + row], packed.data() + row * Ops::bytes);
   }
@@ -444,9 +450,9 @@ std::vector<std::uint8_t> parameterized_quicksilver_verify_impl(
   tmp = field_multiply<Ops>(tmp, delta);
   Ops::add_inplace(&q_star, &tmp);
   for (std::size_t i = 0; i != layout.vole_bits; ++i) {
-    typename Ops::Field term;
-    Ops::mul_bit(&term, &delta, ptr_get_bit(masked.data(), i));
-    Ops::add_inplace(&keys[i], &term);
+    /* The masked witness is public proof data at verification time. Skipping
+     * zero bits avoids constructing and XORing an all-zero field element. */
+    if (ptr_get_bit(masked.data(), i)) Ops::add_inplace(&keys[i], &delta);
   }
   typename Ops::VerifierHash hasher;
   Ops::verifier_init(&hasher, challenge_2.data());

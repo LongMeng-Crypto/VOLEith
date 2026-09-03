@@ -16,12 +16,10 @@
 
 static const uint32_t TWEAK_OFFSET = UINT32_C(0x80000000); // 2^31
 
-#if !defined(FAEST_TESTS)
-static
-#endif
-    unsigned int
-    convert_to_vole(const uint8_t* iv, const uint8_t* sd, bool sd0_bot, unsigned int i,
-                    unsigned int outlen, uint8_t* u, uint8_t* v, const faest_paramset_t* params) {
+static unsigned int convert_to_vole_with_scratch(
+    const uint8_t* iv, const uint8_t* sd, bool sd0_bot, unsigned int i,
+    unsigned int outlen, uint8_t* u, uint8_t* v,
+    const faest_paramset_t* params, uint8_t* scratch) {
   const unsigned int lambda        = params->lambda;
   const unsigned int tau_1         = params->tau1;
   const unsigned int k             = params->k;
@@ -29,40 +27,59 @@ static
   const unsigned int lambda_bytes  = lambda / 8;
   const unsigned int depth         = bavc_max_node_depth(i, tau_1, k);
 
-  // (depth + 1) x num_instances array of outlen; but we only need two rows at a time
-  uint8_t* r = calloc(2 * num_instances, outlen);
-
-#define R(row, column) (r + (((row) % 2) * num_instances + (column)) * outlen)
 #define V(idx) (v + (idx) * outlen)
+
+  /* Fold the binary tree online. The caller reuses this scratch allocation
+   * across every tree in one VOLE operation. A public bit mask records which
+   * stack levels are occupied, so no clearing or per-tree allocation is
+   * needed. */
+  assert(depth < 64);
+  uint8_t* stack = scratch;
+  uint8_t* current = scratch + (MAX_DEPTH + 1) * outlen;
+  uint64_t occupied = 0;
 
   uint32_t tweak = i ^ TWEAK_OFFSET;
 
-  // Step: 2
-  if (!sd0_bot) {
-    prg(sd, iv, tweak, R(0, 0), lambda, outlen);
-  }
-
-  // Step: 3..4
-  for (unsigned int j = 1; j < num_instances; ++j) {
-    prg(sd + lambda_bytes * j, iv, tweak, R(0, j), lambda, outlen);
-  }
-
-  // Step: 5..9
   memset(v, 0, depth * outlen);
-  for (unsigned int j = 0; j < depth; j++) {
-    unsigned int depthloop = num_instances >> (j + 1);
-    for (unsigned int idx = 0; idx < depthloop; idx++) {
-      xor_u8_array(V(j), R(j, 2 * idx + 1), V(j), outlen);
-      xor_u8_array(R(j, 2 * idx), R(j, 2 * idx + 1), R(j + 1, idx), outlen);
+
+  for (unsigned int leaf = 0; leaf < num_instances; ++leaf) {
+    if (sd0_bot && leaf == 0) {
+      memset(current, 0, outlen);
+    } else {
+      prg(sd + lambda_bytes * leaf, iv, tweak, current, lambda, outlen);
     }
+
+    unsigned int level = 0;
+    while ((occupied >> level) & 1) {
+      xor_u8_array(V(level), current, V(level), outlen);
+      xor_u8_array(stack + level * outlen, current, current, outlen);
+      occupied &= ~(UINT64_C(1) << level);
+      ++level;
+    }
+    memcpy(stack + level * outlen, current, outlen);
+    occupied |= UINT64_C(1) << level;
   }
+
   // Step: 10
   if (!sd0_bot && u != NULL) {
-    memcpy(u, R(depth, 0), outlen);
+    memcpy(u, stack + depth * outlen, outlen);
   }
-  free(r);
   return depth;
 }
+
+#if defined(FAEST_TESTS)
+unsigned int convert_to_vole(const uint8_t* iv, const uint8_t* sd,
+                             bool sd0_bot, unsigned int i,
+                             unsigned int outlen, uint8_t* u, uint8_t* v,
+                             const faest_paramset_t* params) {
+  uint8_t* scratch = malloc((MAX_DEPTH + 2) * outlen);
+  assert(scratch);
+  const unsigned int depth = convert_to_vole_with_scratch(
+      iv, sd, sd0_bot, i, outlen, u, v, params, scratch);
+  free(scratch);
+  return depth;
+}
+#endif
 
 void vole_commit(const uint8_t* rootKey, const uint8_t* iv, unsigned int ellhat,
                  const faest_paramset_t* params, bavc_t* bavc, uint8_t* c, uint8_t* u,
@@ -77,14 +94,17 @@ void vole_commit(const uint8_t* rootKey, const uint8_t* iv, unsigned int ellhat,
   bavc_commit(bavc, rootKey, iv, params);
 
   uint8_t* ui = malloc(tau * ellhat_bytes);
+  uint8_t* convert_scratch = malloc((MAX_DEPTH + 2) * ellhat_bytes);
   assert(ui);
+  assert(convert_scratch);
 
   unsigned int v_idx = 0;
   uint8_t* sd_i      = bavc->sd;
   for (unsigned int i = 0; i < tau; ++i) {
     // Step 6
-    v_idx +=
-        convert_to_vole(iv, sd_i, false, i, ellhat_bytes, ui + i * ellhat_bytes, v[v_idx], params);
+    v_idx += convert_to_vole_with_scratch(
+        iv, sd_i, false, i, ellhat_bytes, ui + i * ellhat_bytes, v[v_idx],
+        params, convert_scratch);
     sd_i += lambda_bytes * bavc_max_node_index(i, tau_1, k);
   }
 
@@ -100,6 +120,7 @@ void vole_commit(const uint8_t* rootKey, const uint8_t* iv, unsigned int ellhat,
     xor_u8_array(u, ui + i * ellhat_bytes, c + (i - 1) * ellhat_bytes, ellhat_bytes);
   }
   free(ui);
+  free(convert_scratch);
 }
 
 bool vole_reconstruct(uint8_t* com, uint8_t** q, const uint8_t* iv, const uint8_t* chall_3,
@@ -130,8 +151,10 @@ bool vole_reconstruct(uint8_t* com, uint8_t** q, const uint8_t* iv, const uint8_
 
   uint8_t* sd   = malloc((1 << k) * lambda_bytes);
   uint8_t* qtmp = malloc(MAX_DEPTH * ellhat_bytes);
+  uint8_t* convert_scratch = malloc((MAX_DEPTH + 2) * ellhat_bytes);
   assert(sd);
   assert(qtmp);
+  assert(convert_scratch);
 
   // Step: 1
   unsigned int q_idx = 0;
@@ -150,7 +173,8 @@ bool vole_reconstruct(uint8_t* com, uint8_t** q, const uint8_t* iv, const uint8_
     }
 
     // Step: 7..8
-    const unsigned int ki = convert_to_vole(iv, sd, true, i, ellhat_bytes, NULL, qtmp, params);
+    const unsigned int ki = convert_to_vole_with_scratch(
+        iv, sd, true, i, ellhat_bytes, NULL, qtmp, params, convert_scratch);
 
     // Step 11
     if (i == 0) {
@@ -173,6 +197,7 @@ bool vole_reconstruct(uint8_t* com, uint8_t** q, const uint8_t* iv, const uint8_
   }
 
   free(qtmp);
+  free(convert_scratch);
   free(sd);
   free(bavc_rec.s);
   return true;

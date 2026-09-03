@@ -36,47 +36,163 @@
   ((UINT64_C(x7) << 56) | (UINT64_C(x6) << 48) | (UINT64_C(x5) << 40) | (UINT64_C(x4) << 32) |     \
    (UINT64_C(x3) << 24) | (UINT64_C(x2) << 16) | (UINT64_C(x1) << 8) | UINT64_C(x0))
 
-/*
- * Carry-less schoolbook multiplication followed by reduction modulo
- * x^(64*n) + modulus.  Every supported modulus has degree below 64, so a
- * descending limb pass is sufficient.  The loop bounds and memory accesses
- * depend only on public field sizes; this remains constant-time with respect
- * to all field values.
- */
 #if defined(FAEST_HAVE_RUNTIME_PCLMUL)
 ATTR_TARGET_PCLMUL
-static void bf_clmul_reduce(uint64_t* dst, const uint64_t* lhs, size_t lhs_words,
-                            const uint64_t* rhs, size_t rhs_words,
-                            size_t field_words, uint64_t modulus) {
+static void bf_clmul_word(uint64_t lhs, uint64_t rhs, uint64_t out[2]) {
+  const __m128i a = _mm_set_epi64x(0, (long long)lhs);
+  const __m128i b = _mm_set_epi64x(0, (long long)rhs);
+  const __m128i p = _mm_clmulepi64_si128(a, b, 0x00);
+  _mm_storeu_si128((__m128i*)out, p);
+}
+
+/* Two-word Karatsuba: three CLMULs instead of four. */
+ATTR_TARGET_PCLMUL
+static void bf_clmul_product_2(const uint64_t lhs[2], const uint64_t rhs[2],
+                               uint64_t product[4]) {
+  uint64_t p0[2], p1[2], cross[2];
+  bf_clmul_word(lhs[0], rhs[0], p0);
+  bf_clmul_word(lhs[1], rhs[1], p1);
+  bf_clmul_word(lhs[0] ^ lhs[1], rhs[0] ^ rhs[1], cross);
+  cross[0] ^= p0[0] ^ p1[0];
+  cross[1] ^= p0[1] ^ p1[1];
+  product[0] = p0[0];
+  product[1] = p0[1] ^ cross[0];
+  product[2] = cross[1] ^ p1[0];
+  product[3] = p1[1];
+}
+
+/* Three-word pairwise Karatsuba: six CLMULs instead of nine. */
+ATTR_TARGET_PCLMUL
+static void bf_clmul_product_3(const uint64_t lhs[3], const uint64_t rhs[3],
+                               uint64_t product[6]) {
+  uint64_t diagonal[3][2], cross01[2], cross02[2], cross12[2];
+  for (size_t i = 0; i != 3; ++i) bf_clmul_word(lhs[i], rhs[i], diagonal[i]);
+  bf_clmul_word(lhs[0] ^ lhs[1], rhs[0] ^ rhs[1], cross01);
+  bf_clmul_word(lhs[0] ^ lhs[2], rhs[0] ^ rhs[2], cross02);
+  bf_clmul_word(lhs[1] ^ lhs[2], rhs[1] ^ rhs[2], cross12);
+  for (size_t limb = 0; limb != 2; ++limb) {
+    cross01[limb] ^= diagonal[0][limb] ^ diagonal[1][limb];
+    cross02[limb] ^= diagonal[0][limb] ^ diagonal[2][limb];
+    cross12[limb] ^= diagonal[1][limb] ^ diagonal[2][limb];
+  }
+  memset(product, 0, 6 * sizeof(*product));
+#define XOR_PAIR(offset, value)                                                                  \
+  do {                                                                                           \
+    product[(offset)] ^= (value)[0];                                                             \
+    product[(offset) + 1] ^= (value)[1];                                                         \
+  } while (0)
+  XOR_PAIR(0, diagonal[0]);
+  XOR_PAIR(1, cross01);
+  XOR_PAIR(2, diagonal[1]);
+  XOR_PAIR(2, cross02);
+  XOR_PAIR(3, cross12);
+  XOR_PAIR(4, diagonal[2]);
+#undef XOR_PAIR
+}
+
+/* Four-word recursive Karatsuba: nine CLMULs instead of sixteen. */
+ATTR_TARGET_PCLMUL
+static void bf_clmul_product_4(const uint64_t lhs[4], const uint64_t rhs[4],
+                               uint64_t product[8]) {
+  const uint64_t lhs_cross[2] = {lhs[0] ^ lhs[2], lhs[1] ^ lhs[3]};
+  const uint64_t rhs_cross[2] = {rhs[0] ^ rhs[2], rhs[1] ^ rhs[3]};
+  uint64_t low[4], high[4], cross[4];
+  bf_clmul_product_2(lhs, rhs, low);
+  bf_clmul_product_2(lhs + 2, rhs + 2, high);
+  bf_clmul_product_2(lhs_cross, rhs_cross, cross);
+  memset(product, 0, 8 * sizeof(*product));
+  for (size_t i = 0; i != 4; ++i) {
+    cross[i] ^= low[i] ^ high[i];
+    product[i] ^= low[i];
+    product[i + 2] ^= cross[i];
+    product[i + 4] ^= high[i];
+  }
+}
+
+ATTR_TARGET_PCLMUL
+static void bf_clmul_product_word(const uint64_t* lhs, size_t words,
+                                  uint64_t rhs, uint64_t* product) {
+  memset(product, 0, (words + 1) * sizeof(*product));
+  for (size_t i = 0; i != words; ++i) {
+    uint64_t partial[2];
+    bf_clmul_word(lhs[i], rhs, partial);
+    product[i] ^= partial[0];
+    product[i + 1] ^= partial[1];
+  }
+}
+
+ATTR_TARGET_PCLMUL
+static void bf_reduce_word(uint64_t* product, size_t high_index,
+                           size_t field_words, uint64_t modulus) {
+  uint64_t reduced[2];
+  bf_clmul_word(product[high_index], modulus, reduced);
+  product[high_index] = 0;
+  product[high_index - field_words] ^= reduced[0];
+  product[high_index - field_words + 1] ^= reduced[1];
+}
+
+ATTR_TARGET_PCLMUL
+static void bf_reduce_128(uint64_t product[4]) {
+  bf_reduce_word(product, 3, 2, bf128_modulus);
+  bf_reduce_word(product, 2, 2, bf128_modulus);
+}
+
+ATTR_TARGET_PCLMUL
+static void bf_reduce_192(uint64_t product[6]) {
+  bf_reduce_word(product, 5, 3, bf192_modulus);
+  bf_reduce_word(product, 4, 3, bf192_modulus);
+  bf_reduce_word(product, 3, 3, bf192_modulus);
+}
+
+ATTR_TARGET_PCLMUL
+static void bf_reduce_256(uint64_t product[8]) {
+  bf_reduce_word(product, 7, 4, bf256_modulus);
+  bf_reduce_word(product, 6, 4, bf256_modulus);
+  bf_reduce_word(product, 5, 4, bf256_modulus);
+  bf_reduce_word(product, 4, 4, bf256_modulus);
+}
+
+/* The wider leaf-hash extension fields have asymmetric 9x3 and 12x4
+ * products. Keep a constant-time generic helper for those uncommon shapes;
+ * the hot 128/192/256 QuickSilver fields use the fixed Karatsuba paths above. */
+ATTR_TARGET_PCLMUL
+static void bf_clmul_reduce(uint64_t* dst, const uint64_t* lhs,
+                            size_t lhs_words, const uint64_t* rhs,
+                            size_t rhs_words, size_t field_words,
+                            uint64_t modulus) {
   uint64_t product[24] = {0};
   for (size_t i = 0; i != lhs_words; ++i) {
     for (size_t j = 0; j != rhs_words; ++j) {
-      const __m128i a = _mm_set_epi64x(0, (long long)lhs[i]);
-      const __m128i b = _mm_set_epi64x(0, (long long)rhs[j]);
-      const __m128i p = _mm_clmulepi64_si128(a, b, 0x00);
-      uint64_t limbs[2];
-      _mm_storeu_si128((__m128i*)limbs, p);
-      product[i + j] ^= limbs[0];
-      product[i + j + 1] ^= limbs[1];
+      uint64_t partial[2];
+      bf_clmul_word(lhs[i], rhs[j], partial);
+      product[i + j] ^= partial[0];
+      product[i + j + 1] ^= partial[1];
     }
   }
-
-  for (size_t i = lhs_words + rhs_words; i-- > field_words;) {
-    const uint64_t high = product[i];
-    const __m128i a = _mm_set_epi64x(0, (long long)high);
-    const __m128i b = _mm_set_epi64x(0, (long long)modulus);
-    const __m128i p = _mm_clmulepi64_si128(a, b, 0x00);
-    uint64_t reduced[2];
-    _mm_storeu_si128((__m128i*)reduced, p);
-    product[i] = 0;
-    product[i - field_words] ^= reduced[0];
-    product[i - field_words + 1] ^= reduced[1];
-  }
+  for (size_t i = lhs_words + rhs_words; i-- > field_words;)
+    bf_reduce_word(product, i, field_words, modulus);
   for (size_t i = 0; i != field_words; ++i) dst[i] = product[i];
 }
 
 static bool bf_runtime_has_pclmul(void) {
   return __builtin_cpu_supports("pclmul");
+}
+
+/* GF(2^64) reduction needs a second fold because the first fold may still
+ * contain terms of degree 64 or higher. */
+ATTR_TARGET_PCLMUL
+static uint64_t bf64_mul_pclmul(uint64_t lhs, uint64_t rhs) {
+  const __m128i a = _mm_set_epi64x(0, (long long)lhs);
+  const __m128i b = _mm_set_epi64x(0, (long long)rhs);
+  const __m128i modulus = _mm_set_epi64x(0, (long long)bf64_modulus);
+  const __m128i product = _mm_clmulepi64_si128(a, b, 0x00);
+  const __m128i fold1 =
+      _mm_clmulepi64_si128(_mm_srli_si128(product, 8), modulus, 0x00);
+  const __m128i fold2 =
+      _mm_clmulepi64_si128(_mm_srli_si128(fold1, 8), modulus, 0x00);
+  return (uint64_t)_mm_cvtsi128_si64(product) ^
+         (uint64_t)_mm_cvtsi128_si64(fold1) ^
+         (uint64_t)_mm_cvtsi128_si64(fold2);
 }
 #endif
 
@@ -130,6 +246,11 @@ bf8_t bf8_inv(bf8_t in) {
 // GF(2^64) implementation
 
 bf64_t bf64_mul(bf64_t lhs, bf64_t rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    return bf64_mul_pclmul(lhs, rhs);
+  }
+#endif
   bf64_t result = (-(rhs & 1)) & lhs;
   for (unsigned int idx = 1; idx != 64; ++idx) {
     const uint64_t mask = -((lhs >> 63) & 1);
@@ -283,7 +404,37 @@ bf128_bit_to_uint64_mask(const bf128_t* value, unsigned int bit) {
   return -((BF_VALUE(*value, byte_idx) >> bit_idx) & 1);
 }
 
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+static void bf128_mul_pclmul(bf128_t* dst, const bf128_t* lhs,
+                             const bf128_t* rhs) {
+  const uint64_t a[2] = {BF_VALUE(*lhs, 0), BF_VALUE(*lhs, 1)};
+  const uint64_t b[2] = {BF_VALUE(*rhs, 0), BF_VALUE(*rhs, 1)};
+  uint64_t product[4];
+  bf_clmul_product_2(a, b, product);
+  bf_reduce_128(product);
+  BF_VALUE(*dst, 0) = product[0];
+  BF_VALUE(*dst, 1) = product[1];
+}
+
+ATTR_TARGET_PCLMUL
+static void bf128_mul_64_pclmul(bf128_t* dst, const bf128_t* lhs,
+                                bf64_t rhs) {
+  const uint64_t a[2] = {BF_VALUE(*lhs, 0), BF_VALUE(*lhs, 1)};
+  uint64_t product[4] = {0};
+  bf_clmul_product_word(a, 2, rhs, product);
+  bf_reduce_word(product, 2, 2, bf128_modulus);
+  BF_VALUE(*dst, 0) = product[0];
+  BF_VALUE(*dst, 1) = product[1];
+}
+#endif
+
 void bf128_mul(bf128_t* dst, const bf128_t* lhs, const bf128_t* rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    bf128_mul_pclmul(dst, lhs, rhs);
+    return;
+  }
+#endif
   bf128_t tmp = *lhs;
   bf128_and_64(dst, lhs, bf128_bit_to_uint64_mask(rhs, 0));
   for (unsigned int idx = 1; idx != 128; ++idx) {
@@ -298,6 +449,12 @@ void bf128_mul(bf128_t* dst, const bf128_t* lhs, const bf128_t* rhs) {
 }
 
 void bf128_mul_inplace(bf128_t* lhs, const bf128_t* rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    bf128_mul_pclmul(lhs, lhs, rhs);
+    return;
+  }
+#endif
   bf128_t tmp = *lhs;
   bf128_and_64(lhs, lhs, bf128_bit_to_uint64_mask(rhs, 0));
   for (unsigned int idx = 1; idx != 128; ++idx) {
@@ -312,6 +469,12 @@ void bf128_mul_inplace(bf128_t* lhs, const bf128_t* rhs) {
 }
 
 void bf128_mul_64_inplace(bf128_t* lhs, bf64_t rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    bf128_mul_64_pclmul(lhs, lhs, rhs);
+    return;
+  }
+#endif
   bf128_t tmp = *lhs;
   bf128_and_64(lhs, lhs, bf64_bit_to_mask(rhs, 0));
   for (unsigned int idx = 1; idx != 64; ++idx) {
@@ -323,6 +486,42 @@ void bf128_mul_64_inplace(bf128_t* lhs, bf64_t rhs) {
     bf128_and_64(&tmp1, &tmp, bf64_bit_to_mask(rhs, idx));
     bf128_add_inplace(lhs, &tmp1);
   }
+}
+
+void bf128_mul_3_inplace(bf128_t lhs[3], const bf128_t* rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    const uint64_t b[2] = {BF_VALUE(*rhs, 0), BF_VALUE(*rhs, 1)};
+    for (size_t lane = 0; lane != 3; ++lane) {
+      const uint64_t a[2] = {BF_VALUE(lhs[lane], 0), BF_VALUE(lhs[lane], 1)};
+      uint64_t product[4];
+      bf_clmul_product_2(a, b, product);
+      bf_reduce_128(product);
+      BF_VALUE(lhs[lane], 0) = product[0];
+      BF_VALUE(lhs[lane], 1) = product[1];
+    }
+    return;
+  }
+#endif
+  for (size_t lane = 0; lane != 3; ++lane) bf128_mul_inplace(&lhs[lane], rhs);
+}
+
+void bf128_mul_64_3_inplace(bf128_t lhs[3], bf64_t rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    for (size_t lane = 0; lane != 3; ++lane) {
+      const uint64_t a[2] = {BF_VALUE(lhs[lane], 0), BF_VALUE(lhs[lane], 1)};
+      uint64_t product[4] = {0};
+      bf_clmul_product_word(a, 2, rhs, product);
+      bf_reduce_word(product, 2, 2, bf128_modulus);
+      BF_VALUE(lhs[lane], 0) = product[0];
+      BF_VALUE(lhs[lane], 1) = product[1];
+    }
+    return;
+  }
+#endif
+  for (size_t lane = 0; lane != 3; ++lane)
+    bf128_mul_64_inplace(&lhs[lane], rhs);
 }
 
 #if !defined(HAVE_ATTR_VECTOR_SIZE)
@@ -513,11 +712,12 @@ void bf192_mul(bf192_t* dst, const bf192_t* lhs, const bf192_t* rhs) {
   if (bf_runtime_has_pclmul()) {
     const uint64_t a[3] = {BF_VALUE(*lhs, 0), BF_VALUE(*lhs, 1), BF_VALUE(*lhs, 2)};
     const uint64_t b[3] = {BF_VALUE(*rhs, 0), BF_VALUE(*rhs, 1), BF_VALUE(*rhs, 2)};
-    uint64_t result[3];
-    bf_clmul_reduce(result, a, 3, b, 3, 3, bf192_modulus);
-    BF_VALUE(*dst, 0) = result[0];
-    BF_VALUE(*dst, 1) = result[1];
-    BF_VALUE(*dst, 2) = result[2];
+    uint64_t product[6];
+    bf_clmul_product_3(a, b, product);
+    bf_reduce_192(product);
+    BF_VALUE(*dst, 0) = product[0];
+    BF_VALUE(*dst, 1) = product[1];
+    BF_VALUE(*dst, 2) = product[2];
 #if defined(HAVE_ATTR_VECTOR_SIZE)
     BF_VALUE(*dst, 3) = 0;
 #endif
@@ -542,11 +742,12 @@ void bf192_mul_inplace(bf192_t* lhs, const bf192_t* rhs) {
   if (bf_runtime_has_pclmul()) {
     const uint64_t a[3] = {BF_VALUE(*lhs, 0), BF_VALUE(*lhs, 1), BF_VALUE(*lhs, 2)};
     const uint64_t b[3] = {BF_VALUE(*rhs, 0), BF_VALUE(*rhs, 1), BF_VALUE(*rhs, 2)};
-    uint64_t result[3];
-    bf_clmul_reduce(result, a, 3, b, 3, 3, bf192_modulus);
-    BF_VALUE(*lhs, 0) = result[0];
-    BF_VALUE(*lhs, 1) = result[1];
-    BF_VALUE(*lhs, 2) = result[2];
+    uint64_t product[6];
+    bf_clmul_product_3(a, b, product);
+    bf_reduce_192(product);
+    BF_VALUE(*lhs, 0) = product[0];
+    BF_VALUE(*lhs, 1) = product[1];
+    BF_VALUE(*lhs, 2) = product[2];
 #if defined(HAVE_ATTR_VECTOR_SIZE)
     BF_VALUE(*lhs, 3) = 0;
 #endif
@@ -570,11 +771,12 @@ void bf192_mul_64_inplace(bf192_t* lhs, bf64_t rhs) {
 #if defined(FAEST_HAVE_RUNTIME_PCLMUL)
   if (bf_runtime_has_pclmul()) {
     const uint64_t a[3] = {BF_VALUE(*lhs, 0), BF_VALUE(*lhs, 1), BF_VALUE(*lhs, 2)};
-    uint64_t result[3];
-    bf_clmul_reduce(result, a, 3, &rhs, 1, 3, bf192_modulus);
-    BF_VALUE(*lhs, 0) = result[0];
-    BF_VALUE(*lhs, 1) = result[1];
-    BF_VALUE(*lhs, 2) = result[2];
+    uint64_t product[6] = {0};
+    bf_clmul_product_word(a, 3, rhs, product);
+    bf_reduce_word(product, 3, 3, bf192_modulus);
+    BF_VALUE(*lhs, 0) = product[0];
+    BF_VALUE(*lhs, 1) = product[1];
+    BF_VALUE(*lhs, 2) = product[2];
 #if defined(HAVE_ATTR_VECTOR_SIZE)
     BF_VALUE(*lhs, 3) = 0;
 #endif
@@ -592,6 +794,53 @@ void bf192_mul_64_inplace(bf192_t* lhs, bf64_t rhs) {
     bf192_and_64(&tmp1, &tmp, bf64_bit_to_mask(rhs, idx));
     bf192_add_inplace(lhs, &tmp1);
   }
+}
+
+void bf192_mul_3_inplace(bf192_t lhs[3], const bf192_t* rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    const uint64_t b[3] = {BF_VALUE(*rhs, 0), BF_VALUE(*rhs, 1),
+                           BF_VALUE(*rhs, 2)};
+    for (size_t lane = 0; lane != 3; ++lane) {
+      const uint64_t a[3] = {BF_VALUE(lhs[lane], 0), BF_VALUE(lhs[lane], 1),
+                             BF_VALUE(lhs[lane], 2)};
+      uint64_t product[6];
+      bf_clmul_product_3(a, b, product);
+      bf_reduce_192(product);
+      BF_VALUE(lhs[lane], 0) = product[0];
+      BF_VALUE(lhs[lane], 1) = product[1];
+      BF_VALUE(lhs[lane], 2) = product[2];
+#if defined(HAVE_ATTR_VECTOR_SIZE)
+      BF_VALUE(lhs[lane], 3) = 0;
+#endif
+    }
+    return;
+  }
+#endif
+  for (size_t lane = 0; lane != 3; ++lane) bf192_mul_inplace(&lhs[lane], rhs);
+}
+
+void bf192_mul_64_3_inplace(bf192_t lhs[3], bf64_t rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    for (size_t lane = 0; lane != 3; ++lane) {
+      const uint64_t a[3] = {BF_VALUE(lhs[lane], 0), BF_VALUE(lhs[lane], 1),
+                             BF_VALUE(lhs[lane], 2)};
+      uint64_t product[6] = {0};
+      bf_clmul_product_word(a, 3, rhs, product);
+      bf_reduce_word(product, 3, 3, bf192_modulus);
+      BF_VALUE(lhs[lane], 0) = product[0];
+      BF_VALUE(lhs[lane], 1) = product[1];
+      BF_VALUE(lhs[lane], 2) = product[2];
+#if defined(HAVE_ATTR_VECTOR_SIZE)
+      BF_VALUE(lhs[lane], 3) = 0;
+#endif
+    }
+    return;
+  }
+#endif
+  for (size_t lane = 0; lane != 3; ++lane)
+    bf192_mul_64_inplace(&lhs[lane], rhs);
 }
 
 #if !defined(HAVE_ATTR_VECTOR_SIZE)
@@ -789,9 +1038,10 @@ void bf256_mul(bf256_t* dst, const bf256_t* lhs, const bf256_t* rhs) {
                            BF_VALUE(*lhs, 2), BF_VALUE(*lhs, 3)};
     const uint64_t b[4] = {BF_VALUE(*rhs, 0), BF_VALUE(*rhs, 1),
                            BF_VALUE(*rhs, 2), BF_VALUE(*rhs, 3)};
-    uint64_t result[4];
-    bf_clmul_reduce(result, a, 4, b, 4, 4, bf256_modulus);
-    for (size_t i = 0; i != 4; ++i) BF_VALUE(*dst, i) = result[i];
+    uint64_t product[8];
+    bf_clmul_product_4(a, b, product);
+    bf_reduce_256(product);
+    for (size_t i = 0; i != 4; ++i) BF_VALUE(*dst, i) = product[i];
     return;
   }
 #endif
@@ -822,9 +1072,10 @@ void bf256_mul_inplace(bf256_t* lhs, const bf256_t* rhs) {
                            BF_VALUE(*lhs, 2), BF_VALUE(*lhs, 3)};
     const uint64_t b[4] = {BF_VALUE(*rhs, 0), BF_VALUE(*rhs, 1),
                            BF_VALUE(*rhs, 2), BF_VALUE(*rhs, 3)};
-    uint64_t result[4];
-    bf_clmul_reduce(result, a, 4, b, 4, 4, bf256_modulus);
-    for (size_t i = 0; i != 4; ++i) BF_VALUE(*lhs, i) = result[i];
+    uint64_t product[8];
+    bf_clmul_product_4(a, b, product);
+    bf_reduce_256(product);
+    for (size_t i = 0; i != 4; ++i) BF_VALUE(*lhs, i) = product[i];
     return;
   }
 #endif
@@ -854,9 +1105,10 @@ void bf256_mul_64_inplace(bf256_t* lhs, bf64_t rhs) {
   if (bf_runtime_has_pclmul()) {
     const uint64_t a[4] = {BF_VALUE(*lhs, 0), BF_VALUE(*lhs, 1),
                            BF_VALUE(*lhs, 2), BF_VALUE(*lhs, 3)};
-    uint64_t result[4];
-    bf_clmul_reduce(result, a, 4, &rhs, 1, 4, bf256_modulus);
-    for (size_t i = 0; i != 4; ++i) BF_VALUE(*lhs, i) = result[i];
+    uint64_t product[8] = {0};
+    bf_clmul_product_word(a, 4, rhs, product);
+    bf_reduce_word(product, 4, 4, bf256_modulus);
+    for (size_t i = 0; i != 4; ++i) BF_VALUE(*lhs, i) = product[i];
     return;
   }
 #endif
@@ -878,6 +1130,45 @@ void bf256_mul_64_inplace(bf256_t* lhs, bf64_t rhs) {
     bf256_and_64(&tmp1, &tmp, bf64_bit_to_mask(rhs, idx));
     bf256_add_inplace(lhs, &tmp1);
   }
+}
+
+void bf256_mul_3_inplace(bf256_t lhs[3], const bf256_t* rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    const uint64_t b[4] = {BF_VALUE(*rhs, 0), BF_VALUE(*rhs, 1),
+                           BF_VALUE(*rhs, 2), BF_VALUE(*rhs, 3)};
+    for (size_t lane = 0; lane != 3; ++lane) {
+      const uint64_t a[4] = {BF_VALUE(lhs[lane], 0), BF_VALUE(lhs[lane], 1),
+                             BF_VALUE(lhs[lane], 2), BF_VALUE(lhs[lane], 3)};
+      uint64_t product[8];
+      bf_clmul_product_4(a, b, product);
+      bf_reduce_256(product);
+      for (size_t word = 0; word != 4; ++word)
+        BF_VALUE(lhs[lane], word) = product[word];
+    }
+    return;
+  }
+#endif
+  for (size_t lane = 0; lane != 3; ++lane) bf256_mul_inplace(&lhs[lane], rhs);
+}
+
+void bf256_mul_64_3_inplace(bf256_t lhs[3], bf64_t rhs) {
+#if defined(FAEST_HAVE_RUNTIME_PCLMUL)
+  if (bf_runtime_has_pclmul()) {
+    for (size_t lane = 0; lane != 3; ++lane) {
+      const uint64_t a[4] = {BF_VALUE(lhs[lane], 0), BF_VALUE(lhs[lane], 1),
+                             BF_VALUE(lhs[lane], 2), BF_VALUE(lhs[lane], 3)};
+      uint64_t product[8] = {0};
+      bf_clmul_product_word(a, 4, rhs, product);
+      bf_reduce_word(product, 4, 4, bf256_modulus);
+      for (size_t word = 0; word != 4; ++word)
+        BF_VALUE(lhs[lane], word) = product[word];
+    }
+    return;
+  }
+#endif
+  for (size_t lane = 0; lane != 3; ++lane)
+    bf256_mul_64_inplace(&lhs[lane], rhs);
 }
 
 #if !defined(HAVE_ATTR_VECTOR_SIZE)
