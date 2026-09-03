@@ -218,17 +218,24 @@ BOOST_AUTO_TEST_CASE(mixed_visibility_sha256_proves_at_all_security_levels) {
       vole_backend::SecurityLevel::Bits256,
   };
   for (const auto security : levels) {
-    const auto proof = vole_backend::prove(
-        mixed.binary_circuit(), security, partitioned.private_bits, statement,
-        context, randomness);
-    BOOST_TEST(vole_backend::verify(mixed.binary_circuit(), security, statement,
-                                    context, proof));
-    BOOST_TEST(proof.size() < vole_backend::serialized_proof_bytes(
-                                  all_secret.binary_circuit(), security));
-    auto wrong_public = statement;
-    wrong_public.public_inputs[3] ^= 1;
-    BOOST_TEST(!vole_backend::verify(mixed.binary_circuit(), security,
-                                     wrong_public, context, proof));
+    for (const auto profile : {vole_backend::VoleProfile::Small,
+                               vole_backend::VoleProfile::Fast}) {
+      const vole_backend::PreparedBinaryCircuit mixed_prepared(
+          mixed.binary_circuit());
+      const vole_backend::PreparedBinaryCircuit all_secret_prepared(
+          all_secret.binary_circuit());
+      const auto proof = vole_backend::prove(
+          mixed_prepared, security, profile, partitioned.private_bits,
+          statement, context, randomness);
+      BOOST_TEST(vole_backend::verify(mixed_prepared, security, profile,
+                                      statement, context, proof));
+      BOOST_TEST(proof.size() < vole_backend::serialized_proof_bytes(
+                                    all_secret_prepared, security, profile));
+      auto wrong_public = statement;
+      wrong_public.public_inputs[3] ^= 1;
+      BOOST_TEST(!vole_backend::verify(mixed_prepared, security, profile,
+                                       wrong_public, context, proof));
+    }
   }
 
   auto wrong_private = partitioned.private_bits;

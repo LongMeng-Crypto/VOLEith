@@ -154,7 +154,7 @@ BOOST_AUTO_TEST_CASE(json_and_xor_known_answer) {
   const auto proof = vole_backend::prove(circuit, private_inputs, statement, context, randomness);
   BOOST_TEST(proof.size() == 2765U);
   BOOST_TEST(vole_backend::circuit_hash(proof) ==
-             hash_bytes("deea83c8346414a27ea59fee8e0d91ac28fa5affd9f5d5f8908bcec180586c11"));
+             hash_bytes("61283b89a412794e0af17d2e2f9f03a5510da98541cdaeeb6fa79d52fc0d8d58"));
   BOOST_TEST(vole_backend::verify(circuit, statement, context, proof));
 }
 
@@ -203,61 +203,102 @@ BOOST_AUTO_TEST_CASE(parameterized_soundness_round_trip_and_separation) {
   for (std::size_t i = 0; i != randomness.size(); ++i)
     randomness[i] = static_cast<std::uint8_t>(0x41 + i);
 
-  const std::array levels = {
-      vole_backend::SecurityLevel::Bits128,
-      vole_backend::SecurityLevel::Bits192,
-      vole_backend::SecurityLevel::Bits256,
+  struct Kat {
+    vole_backend::SecurityLevel level;
+    vole_backend::VoleProfile profile;
+    std::size_t proof_bytes;
+    std::string_view fingerprint;
   };
-  const std::array<std::size_t, 3> expected_sizes = {2765, 6292, 12190};
-  std::array<std::vector<std::uint8_t>, 3> proofs;
-  for (std::size_t i = 0; i != levels.size(); ++i) {
-    proofs[i] = vole_backend::prove(circuit, levels[i], private_inputs,
-                                    statement, context, randomness);
-    BOOST_TEST(proofs[i].size() == expected_sizes[i]);
-    BOOST_TEST(proofs[i].size() ==
-               vole_backend::serialized_proof_bytes(circuit, levels[i]));
-    BOOST_TEST(vole_backend::verify(circuit, levels[i], statement, context,
-                                    proofs[i]));
-    for (const auto other : levels) {
-      if (other != levels[i])
-        BOOST_TEST(!vole_backend::verify(circuit, other, statement, context,
-                                         proofs[i]));
+  const std::array kats = {
+      Kat{vole_backend::SecurityLevel::Bits128,
+          vole_backend::VoleProfile::Small, 2765,
+          "50cdef8c40e8e744fc7c9dc7924601937a2a5552a0f580f36d14dfb2f33d1ea0"},
+      Kat{vole_backend::SecurityLevel::Bits128,
+          vole_backend::VoleProfile::Fast, 3388,
+          "06417295d3cdc51dbd912da69dda2c1df3e6d4f829b0d84990c14c030b1f46d1"},
+      Kat{vole_backend::SecurityLevel::Bits192,
+          vole_backend::VoleProfile::Small, 6292,
+          "01b19fe5c3d75baf1f82956ae340951401644ad77344dc10cc7b6063fe6b57b6"},
+      Kat{vole_backend::SecurityLevel::Bits192,
+          vole_backend::VoleProfile::Fast, 7492,
+          "9a956f141048a88c7fc885e4b8785e2779d17916b4128cfd6f607c5303e5e3bf"},
+      Kat{vole_backend::SecurityLevel::Bits256,
+          vole_backend::VoleProfile::Small, 12190,
+          "c55384716d92a23ae7c0d463adfdb150d58367f4e847ce77a63a2f8f6fb8fa62"},
+      Kat{vole_backend::SecurityLevel::Bits256,
+          vole_backend::VoleProfile::Fast, 14172,
+          "a0b56964e1b4c0d3e5e1a4a806645e2179146782e749a98c351dc675f35ae85a"},
+  };
+  std::array<std::vector<std::uint8_t>, 6> proofs;
+  for (std::size_t i = 0; i != kats.size(); ++i) {
+    const vole_backend::PreparedBinaryCircuit prepared(circuit);
+    const auto& kat = kats[i];
+    proofs[i] = vole_backend::prove(prepared, kat.level, kat.profile,
+                                    private_inputs, statement, context,
+                                    randomness);
+    BOOST_TEST(proofs[i].size() == kat.proof_bytes);
+    BOOST_TEST(proofs[i].size() == vole_backend::serialized_proof_bytes(
+                                         prepared, kat.level, kat.profile));
+    BOOST_TEST(proofs[i][5] == 3U);
+    BOOST_TEST(proofs[i][6] == vole_backend::security_level_code(kat.level));
+    BOOST_TEST(proofs[i][7] == vole_backend::vole_profile_code(kat.profile));
+    BOOST_TEST(vole_backend::circuit_hash(proofs[i]) ==
+               hash_bytes(kat.fingerprint));
+    BOOST_TEST(vole_backend::verify(prepared, kat.level, kat.profile,
+                                    statement, context, proofs[i]));
+    for (const auto& other : kats) {
+      if (other.level != kat.level || other.profile != kat.profile)
+        BOOST_TEST(!vole_backend::verify(prepared, other.level, other.profile,
+                                         statement, context, proofs[i]));
     }
     auto tampered = proofs[i];
-    tampered[6] = static_cast<std::uint8_t>(tampered[6] % 3 + 1);
-    if (tampered[6] == proofs[i][6]) tampered[6] = tampered[6] % 3 + 1;
-    BOOST_TEST(!vole_backend::verify(circuit, levels[i], statement, context,
-                                     tampered));
-    tampered = proofs[i];
     tampered[tampered.size() / 2] ^= 1;
-    BOOST_TEST(!vole_backend::verify(circuit, levels[i], statement, context,
-                                     tampered));
+    BOOST_TEST(!vole_backend::verify(prepared, kat.level, kat.profile,
+                                     statement, context, tampered));
   }
-  BOOST_TEST(proofs[0] != proofs[1]);
-  BOOST_TEST(proofs[1] != proofs[2]);
+  for (std::size_t i = 1; i != proofs.size(); ++i)
+    BOOST_TEST(proofs[i - 1] != proofs[i]);
 }
 
 BOOST_AUTO_TEST_CASE(parameterized_faest_vole_layouts) {
   struct Expected {
     vole_backend::SecurityLevel level;
+    vole_backend::VoleProfile profile;
     std::size_t lambda;
     std::size_t tau;
     std::size_t opening;
   };
   const std::array expected = {
-      Expected{vole_backend::SecurityLevel::Bits128, 128, 11, 2160},
-      Expected{vole_backend::SecurityLevel::Bits192, 192, 16, 5040},
-      Expected{vole_backend::SecurityLevel::Bits256, 256, 22, 9952},
+      Expected{vole_backend::SecurityLevel::Bits128,
+               vole_backend::VoleProfile::Small, 128, 11, 2160},
+      Expected{vole_backend::SecurityLevel::Bits128,
+               vole_backend::VoleProfile::Fast, 128, 16, 2528},
+      Expected{vole_backend::SecurityLevel::Bits192,
+               vole_backend::VoleProfile::Small, 192, 16, 5040},
+      Expected{vole_backend::SecurityLevel::Bits192,
+               vole_backend::VoleProfile::Fast, 192, 24, 5640},
+      Expected{vole_backend::SecurityLevel::Bits256,
+               vole_backend::VoleProfile::Small, 256, 22, 9952},
+      Expected{vole_backend::SecurityLevel::Bits256,
+               vole_backend::VoleProfile::Fast, 256, 32, 10944},
   };
   for (const auto& item : expected) {
-    const auto parameters = vole_backend::faest_vole_parameters(item.level);
+    const auto parameters =
+        vole_backend::faest_vole_parameters(item.level, item.profile);
     BOOST_TEST(parameters.lambda == item.lambda);
     BOOST_TEST(parameters.tau == item.tau);
-    BOOST_TEST(vole_backend::vole_opening_size(item.level) == item.opening);
-    const auto layout = vole_backend::vole_layout(8, item.level);
+    BOOST_TEST(vole_backend::vole_opening_size(item.level, item.profile) ==
+               item.opening);
+    const auto layout =
+        vole_backend::vole_layout(8, item.level, item.profile);
     BOOST_TEST(layout.correction_bytes ==
                (item.tau - 1) * layout.ell_hat_bytes);
   }
+  BOOST_CHECK_THROW(
+      vole_backend::security_parameters(
+          vole_backend::SecurityLevel::Bits128,
+          static_cast<vole_backend::VoleProfile>(0xff)),
+      std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(prepared_circuit_caches_and_preserves_results) {
@@ -270,6 +311,15 @@ BOOST_AUTO_TEST_CASE(prepared_circuit_caches_and_preserves_results) {
   BOOST_TEST(prepared.identifier(vole_backend::SecurityLevel::Bits128).size() == 32U);
   BOOST_TEST(prepared.identifier(vole_backend::SecurityLevel::Bits192).size() == 48U);
   BOOST_TEST(prepared.identifier(vole_backend::SecurityLevel::Bits256).size() == 64U);
+  for (const auto level : {vole_backend::SecurityLevel::Bits128,
+                           vole_backend::SecurityLevel::Bits192,
+                           vole_backend::SecurityLevel::Bits256}) {
+    const auto small =
+        prepared.identifier(level, vole_backend::VoleProfile::Small);
+    const auto fast =
+        prepared.identifier(level, vole_backend::VoleProfile::Fast);
+    BOOST_TEST(!std::equal(small.begin(), small.end(), fast.begin()));
+  }
 
   const std::array<std::uint8_t, 2> private_inputs = {1, 0};
   const vole_backend::PublicStatement statement{{1}, {1}};

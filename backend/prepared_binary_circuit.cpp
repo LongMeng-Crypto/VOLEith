@@ -14,28 +14,37 @@ extern "C" {
 namespace vole_backend {
 namespace {
 
-constexpr char circuit_id_domain[] = "VOLE-BINARY-CIRCUIT-ID-v2";
+constexpr char circuit_id_domain[] = "VOLE-BINARY-CIRCUIT-ID-v3";
 
-std::size_t security_index(SecurityLevel security) {
+std::size_t security_index(SecurityLevel security, VoleProfile profile) {
+  std::size_t profile_offset = 0;
+  switch (profile) {
+  case VoleProfile::Small: profile_offset = 0; break;
+  case VoleProfile::Fast: profile_offset = 3; break;
+  default: throw std::invalid_argument("unsupported VOLEith profile");
+  }
   switch (security) {
-  case SecurityLevel::Bits128: return 0;
-  case SecurityLevel::Bits192: return 1;
-  case SecurityLevel::Bits256: return 2;
+  case SecurityLevel::Bits128: return profile_offset;
+  case SecurityLevel::Bits192: return profile_offset + 1;
+  case SecurityLevel::Bits256: return profile_offset + 2;
   }
   throw std::invalid_argument("unsupported VOLEith security level");
 }
 
 std::vector<std::uint8_t> make_identifier(
-    std::span<const std::uint8_t> encoded, SecurityLevel security) {
+    std::span<const std::uint8_t> encoded, SecurityLevel security,
+    VoleProfile profile) {
   if (encoded.size() > std::numeric_limits<std::uint32_t>::max())
     throw std::invalid_argument("circuit encoding too large");
-  const auto& parameters = security_parameters(security);
+  const auto& parameters = security_parameters(security, profile);
   H2_context_t hash;
   H2_init(&hash, parameters.lambda_bits);
   H2_update(&hash, reinterpret_cast<const std::uint8_t*>(circuit_id_domain),
             sizeof(circuit_id_domain) - 1);
   const auto code = security_level_code(security);
   H2_update(&hash, &code, 1);
+  const auto profile_code = vole_profile_code(profile);
+  H2_update(&hash, &profile_code, 1);
   H2_update_u32_le(&hash, static_cast<std::uint32_t>(encoded.size()));
   H2_update(&hash, encoded.data(), encoded.size());
   std::vector<std::uint8_t> result(2 * parameters.lambda_bytes);
@@ -63,9 +72,14 @@ PreparedBinaryCircuit::PreparedBinaryCircuit(const BinaryCircuit& circuit)
 
   const auto encoded = serialize_vbc(circuit);
   canonical_hash_ = circuit_hash(encoded);
-  identifiers_[0] = make_identifier(encoded, SecurityLevel::Bits128);
-  identifiers_[1] = make_identifier(encoded, SecurityLevel::Bits192);
-  identifiers_[2] = make_identifier(encoded, SecurityLevel::Bits256);
+  for (const auto profile : {VoleProfile::Small, VoleProfile::Fast}) {
+    identifiers_[security_index(SecurityLevel::Bits128, profile)] =
+        make_identifier(encoded, SecurityLevel::Bits128, profile);
+    identifiers_[security_index(SecurityLevel::Bits192, profile)] =
+        make_identifier(encoded, SecurityLevel::Bits192, profile);
+    identifiers_[security_index(SecurityLevel::Bits256, profile)] =
+        make_identifier(encoded, SecurityLevel::Bits256, profile);
+  }
 
   traversal_.reserve(circuit.nodes().size());
   std::size_t private_index = 0;
@@ -86,7 +100,12 @@ PreparedBinaryCircuit::PreparedBinaryCircuit(const BinaryCircuit& circuit)
 
 std::span<const std::uint8_t> PreparedBinaryCircuit::identifier(
     SecurityLevel security) const {
-  return identifiers_[security_index(security)];
+  return identifier(security, VoleProfile::Small);
+}
+
+std::span<const std::uint8_t> PreparedBinaryCircuit::identifier(
+    SecurityLevel security, VoleProfile profile) const {
+  return identifiers_[security_index(security, profile)];
 }
 
 Evaluation PreparedBinaryCircuit::evaluate(

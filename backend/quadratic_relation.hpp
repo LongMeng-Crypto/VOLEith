@@ -56,12 +56,24 @@ public:
 };
 
 std::size_t serialized_proof_bytes(const QuicksilverRelation& relation);
+std::size_t serialized_proof_bytes(const QuicksilverRelation& relation,
+                                   VoleProfile profile);
 std::vector<std::uint8_t> prove(const QuicksilverRelation& relation,
                                 std::span<const std::uint8_t> private_inputs,
                                 const PublicStatement& statement,
                                 std::span<const std::uint8_t> context,
                                 const ProverRandomness& randomness);
+std::vector<std::uint8_t> prove(const QuicksilverRelation& relation,
+                                VoleProfile profile,
+                                std::span<const std::uint8_t> private_inputs,
+                                const PublicStatement& statement,
+                                std::span<const std::uint8_t> context,
+                                const ProverRandomness& randomness);
 bool verify(const QuicksilverRelation& relation, const PublicStatement& statement,
+            std::span<const std::uint8_t> context,
+            std::span<const std::uint8_t> proof);
+bool verify(const QuicksilverRelation& relation, VoleProfile profile,
+            const PublicStatement& statement,
             std::span<const std::uint8_t> context,
             std::span<const std::uint8_t> proof);
 

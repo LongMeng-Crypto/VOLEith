@@ -178,7 +178,7 @@ def benchmark_profile(
         - 1
     ) // profile.block_bits
     circuit_path = workspace / (
-        f"{profile.name}-{len(message)}-bytes-{security_bits}.vbc"
+        f"{profile.name}-{len(message)}-bytes-{security_bits}-{args.vole_profile}.vbc"
     )
 
     print(f"\n[{profile.name}_configuration]")
@@ -189,6 +189,7 @@ def benchmark_profile(
     print(f"compression_block_bits={profile.block_bits}")
     print(f"compression_blocks={compression_blocks}")
     print(f"knowledge_soundness_bits={security_bits}")
+    print(f"vole_profile={args.vole_profile}")
     print(f"complete_message_hex={message_hex}")
     print(f"public_{profile.name}={digest_hex}")
 
@@ -244,6 +245,8 @@ def benchmark_profile(
             f"{args.context_prefix}-{profile.name}-v1",
             "--security",
             str(security_bits),
+            "--profile",
+            args.vole_profile,
             "--iterations",
             str(args.iterations),
         ]
@@ -321,6 +324,12 @@ def main() -> int:
         help="override VOLEith knowledge soundness (single algorithm only)",
     )
     parser.add_argument(
+        "--vole-profile",
+        choices=("s", "f"),
+        default="s",
+        help="FAEST VOLE profile: s minimizes proof size, f favors speed",
+    )
+    parser.add_argument(
         "--context-prefix", default="sha2-benchmark", help="Fiat-Shamir context prefix"
     )
     parser.add_argument(
@@ -374,6 +383,7 @@ def main() -> int:
                     f"blocks={result['compression_blocks']}",
                     f"layout={result['input_layout_bits']}",
                     f"security={result['knowledge_soundness_bits']}",
+                    f"vole_profile={result['profile']}",
                     f"private_bits={result['private_input_bits']}",
                     f"public_bits={result['public_input_bits']}",
                     f"and_gates={result['multiplication_gates']}",

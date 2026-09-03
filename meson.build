@@ -69,7 +69,6 @@ sha2_64_frontend_sources = files(
 )
 
 aes_frontend_sources = files(
-  'circuits/aes/aes128_circuit.cpp',
   'circuits/aes/aes128_faest_circuit.cpp',
 )
 
@@ -100,6 +99,7 @@ tests = executable(
     'tests/fields.cpp',
     'tests/generic_backend.cpp',
     'tests/nizk.cpp',
+    'tests/optimized_primitives.cpp',
     'tests/quicksilver.cpp',
     'tests/sha256_circuit.cpp',
     'tests/sha512_family_circuit.cpp',
@@ -107,7 +107,7 @@ tests = executable(
   ),
   dependencies: [vole_sha256_dep, boost_test],
   include_directories: faest_includes,
-  cpp_args: ['-DBOOST_TEST_DYN_LINK'],
+  cpp_args: ['-DBOOST_TEST_DYN_LINK', '-DFAEST_TESTS'],
 )
 
 executable(

@@ -18,8 +18,14 @@ enum class SecurityLevel : std::uint8_t {
   Bits256 = 3,
 };
 
+enum class VoleProfile : std::uint8_t {
+  Small = 1,
+  Fast = 2,
+};
+
 struct SecurityParameters {
   SecurityLevel level;
+  VoleProfile profile;
   std::size_t lambda_bits;
   std::size_t lambda_bytes;
   faest_paramid_t faest_parameter;
@@ -31,9 +37,14 @@ struct SecurityParameters {
 };
 
 const SecurityParameters& security_parameters(SecurityLevel level);
+const SecurityParameters& security_parameters(SecurityLevel level,
+                                              VoleProfile profile);
 SecurityLevel parse_security_level(std::string_view text);
+VoleProfile parse_vole_profile(std::string_view text);
 std::string_view security_level_name(SecurityLevel level);
+std::string_view vole_profile_name(VoleProfile profile);
 std::uint8_t security_level_code(SecurityLevel level);
+std::uint8_t vole_profile_code(VoleProfile profile);
 
 } // namespace vole_backend
 

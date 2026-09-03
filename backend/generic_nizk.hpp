@@ -24,8 +24,14 @@ using ProverRandomness = std::array<std::uint8_t, 32>;
 std::size_t serialized_proof_bytes(const BinaryCircuit& circuit);
 std::size_t serialized_proof_bytes(const BinaryCircuit& circuit,
                                    SecurityLevel security);
+std::size_t serialized_proof_bytes(const BinaryCircuit& circuit,
+                                   SecurityLevel security,
+                                   VoleProfile profile);
 std::size_t serialized_proof_bytes(const PreparedBinaryCircuit& circuit,
                                    SecurityLevel security);
+std::size_t serialized_proof_bytes(const PreparedBinaryCircuit& circuit,
+                                   SecurityLevel security,
+                                   VoleProfile profile);
 
 std::vector<std::uint8_t> prove(const BinaryCircuit& circuit,
                                 std::span<const std::uint8_t> private_inputs,
@@ -40,8 +46,24 @@ std::vector<std::uint8_t> prove(const PreparedBinaryCircuit& circuit,
                                 std::span<const std::uint8_t> context,
                                 const ProverRandomness& randomness);
 
+std::vector<std::uint8_t> prove(const PreparedBinaryCircuit& circuit,
+                                SecurityLevel security,
+                                VoleProfile profile,
+                                std::span<const std::uint8_t> private_inputs,
+                                const PublicStatement& statement,
+                                std::span<const std::uint8_t> context,
+                                const ProverRandomness& randomness);
+
 std::vector<std::uint8_t> prove(const BinaryCircuit& circuit,
                                 SecurityLevel security,
+                                std::span<const std::uint8_t> private_inputs,
+                                const PublicStatement& statement,
+                                std::span<const std::uint8_t> context,
+                                const ProverRandomness& randomness);
+
+std::vector<std::uint8_t> prove(const BinaryCircuit& circuit,
+                                SecurityLevel security,
+                                VoleProfile profile,
                                 std::span<const std::uint8_t> private_inputs,
                                 const PublicStatement& statement,
                                 std::span<const std::uint8_t> context,
@@ -56,8 +78,18 @@ bool verify(const BinaryCircuit& circuit, SecurityLevel security,
             std::span<const std::uint8_t> context,
             std::span<const std::uint8_t> serialized_proof);
 
+bool verify(const BinaryCircuit& circuit, SecurityLevel security,
+            VoleProfile profile, const PublicStatement& statement,
+            std::span<const std::uint8_t> context,
+            std::span<const std::uint8_t> serialized_proof);
+
 bool verify(const PreparedBinaryCircuit& circuit, SecurityLevel security,
             const PublicStatement& statement,
+            std::span<const std::uint8_t> context,
+            std::span<const std::uint8_t> serialized_proof);
+
+bool verify(const PreparedBinaryCircuit& circuit, SecurityLevel security,
+            VoleProfile profile, const PublicStatement& statement,
             std::span<const std::uint8_t> context,
             std::span<const std::uint8_t> serialized_proof);
 

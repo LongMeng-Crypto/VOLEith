@@ -96,20 +96,24 @@ void check_mixed_visibility_proof(
   vole_backend::ProverRandomness randomness{};
   for (std::size_t i = 0; i != randomness.size(); ++i)
     randomness[i] = static_cast<std::uint8_t>(0x31 + i);
-  const auto proof = vole_backend::prove(
-      circuit.binary_circuit(), security, partitioned.private_bits, statement,
-      context, randomness);
-  BOOST_TEST(vole_backend::verify(circuit.binary_circuit(), security, statement,
-                                  context, proof));
+  const vole_backend::PreparedBinaryCircuit prepared(circuit.binary_circuit());
+  for (const auto profile : {vole_backend::VoleProfile::Small,
+                             vole_backend::VoleProfile::Fast}) {
+    const auto proof = vole_backend::prove(
+        prepared, security, profile, partitioned.private_bits, statement,
+        context, randomness);
+    BOOST_TEST(vole_backend::verify(prepared, security, profile, statement,
+                                    context, proof));
 
-  auto wrong_public = statement;
-  wrong_public.public_inputs.back() ^= 1;
-  BOOST_TEST(!vole_backend::verify(circuit.binary_circuit(), security,
-                                   wrong_public, context, proof));
-  auto wrong_digest = statement;
-  wrong_digest.expected_outputs.front() ^= 1;
-  BOOST_TEST(!vole_backend::verify(circuit.binary_circuit(), security,
-                                   wrong_digest, context, proof));
+    auto wrong_public = statement;
+    wrong_public.public_inputs.back() ^= 1;
+    BOOST_TEST(!vole_backend::verify(prepared, security, profile,
+                                     wrong_public, context, proof));
+    auto wrong_digest = statement;
+    wrong_digest.expected_outputs.front() ^= 1;
+    BOOST_TEST(!vole_backend::verify(prepared, security, profile,
+                                     wrong_digest, context, proof));
+  }
 }
 
 } // namespace

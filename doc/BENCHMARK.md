@@ -104,24 +104,15 @@ For an empty message the complete padded SHA-256 computation is constant, so
 the generator folds away all gates; 2,754 bytes are the fixed proof framing and
 VOLE/BAVC overhead.
 
-## AES-128 comparison
+## AES-128 relation
 
-Both AES experiments prove that a private AES-128 key maps a public plaintext
-to a public ciphertext. The portable Boolean frontend and the optimized
-FAEST-style extension-field relation are checked against the same FIPS-197
-known-answer vector.
+The maintained AES frontend proves that a private AES-128 key maps a public
+plaintext to a public ciphertext using 200 GF(2^8) quadratic constraints and
+a 1,280-bit extended witness. It supports FAEST-128s and FAEST-128f; benchmark
+the current implementation rather than comparing against the removed Boolean
+AES baseline.
 
-| AES-128 frontend | Nonlinear constraints | Extended witness | Proof bytes | Prover mean | Verifier mean |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Boolean baseline | 76,800 GF(2) AND | 76,928 bits | 108,530 | 309.943 ms | 267.969 ms |
-| FAEST-style | 200 GF(2^8) quadratic | 1,280 bits | 4,514 | 18.720 ms | 14.710 ms |
-
-The Boolean benchmark used ten iterations and observed prover min/max
-290.320/334.802 ms and verifier min/max 252.114/282.589 ms. The FAEST-style
-benchmark observed prover min/max 16.841/22.125 ms and verifier min/max
-14.106/15.515 ms.
-
-Commands for regenerating both AES relations and proofs are in
+Commands for regenerating the AES relation and both S/F proofs are in
 [`../vole_aes/README.md`](../vole_aes/README.md).
 
 ## Random-message SHA-256 benchmark

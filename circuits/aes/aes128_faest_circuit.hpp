@@ -4,7 +4,11 @@
 
 #include "quadratic_relation.hpp"
 
+#include <array>
+
 namespace vole_circuits::aes {
+
+using Block = std::array<std::uint8_t, 16>;
 
 class Aes128FaestRelation final : public vole_backend::QuicksilverRelation {
 public:

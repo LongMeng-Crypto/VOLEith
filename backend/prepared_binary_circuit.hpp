@@ -39,6 +39,8 @@ public:
   const CircuitHash& canonical_hash() const { return canonical_hash_; }
   std::span<const PreparedTraversalNode> traversal() const { return traversal_; }
   std::span<const std::uint8_t> identifier(SecurityLevel security) const;
+  std::span<const std::uint8_t> identifier(SecurityLevel security,
+                                           VoleProfile profile) const;
 
   Evaluation evaluate(std::span<const std::uint8_t> private_bits,
                       std::span<const std::uint8_t> public_bits = {}) const;
@@ -52,7 +54,7 @@ private:
   WitnessLayout layout_;
   CircuitHash canonical_hash_{};
   std::vector<PreparedTraversalNode> traversal_;
-  std::array<std::vector<std::uint8_t>, 3> identifiers_;
+  std::array<std::vector<std::uint8_t>, 6> identifiers_;
 };
 
 } // namespace vole_backend

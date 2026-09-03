@@ -32,9 +32,13 @@ VoleLayout vole_layout(std::size_t witness_bits);
 
 faest_paramset_t faest_vole_parameters();
 faest_paramset_t faest_vole_parameters(SecurityLevel level);
+faest_paramset_t faest_vole_parameters(SecurityLevel level, VoleProfile profile);
 
 VoleLayout vole_layout(std::size_t witness_bits, SecurityLevel level);
+VoleLayout vole_layout(std::size_t witness_bits, SecurityLevel level,
+                       VoleProfile profile);
 std::size_t vole_opening_size(SecurityLevel level);
+std::size_t vole_opening_size(SecurityLevel level, VoleProfile profile);
 
 struct ReconstructedVole {
   std::array<std::uint8_t, lambda_bytes> challenge{};
@@ -94,6 +98,7 @@ bool reconstruct_vole(const std::array<std::uint8_t, 16>& iv,
 
 struct ParameterizedReconstructedVole {
   SecurityLevel security = SecurityLevel::Bits128;
+  VoleProfile profile = VoleProfile::Small;
   std::vector<std::uint8_t> challenge;
   std::vector<std::uint8_t> commitment_hash;
   std::vector<std::uint8_t> q_storage;
@@ -105,6 +110,7 @@ struct ParameterizedReconstructedVole {
 class ParameterizedFaestVoleCommitment {
 public:
   ParameterizedFaestVoleCommitment(SecurityLevel security,
+                                   VoleProfile profile,
                                    std::span<const std::uint8_t> root_key,
                                    const std::array<std::uint8_t, 16>& iv,
                                    std::size_t witness_bits);
@@ -114,6 +120,7 @@ public:
   ParameterizedFaestVoleCommitment& operator=(const ParameterizedFaestVoleCommitment&) = delete;
 
   SecurityLevel security() const { return security_; }
+  VoleProfile profile() const { return profile_; }
   const faest_paramset_t& parameters() const { return parameters_; }
   const std::vector<std::uint8_t>& u() const { return u_; }
   const std::vector<std::uint8_t>& corrections() const { return corrections_; }
@@ -124,6 +131,7 @@ public:
 
 private:
   SecurityLevel security_;
+  VoleProfile profile_;
   faest_paramset_t parameters_{};
   std::array<std::uint8_t, 16> iv_{};
   bavc_t bavc_{};
@@ -135,6 +143,7 @@ private:
 };
 
 bool reconstruct_vole(SecurityLevel security,
+                      VoleProfile profile,
                       const std::array<std::uint8_t, 16>& iv,
                       std::span<const std::uint8_t> challenge,
                       std::span<const std::uint8_t> decomposition,

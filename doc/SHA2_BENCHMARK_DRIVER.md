@@ -14,6 +14,7 @@ Run all three intended DAA profiles with ten samples per circuit:
 
 ```sh
 scripts/benchmark_sha2.py --iterations 10
+scripts/benchmark_sha2.py --iterations 10 --vole-profile f
 ```
 
 The defaults are:
@@ -27,6 +28,10 @@ The defaults are:
 Each algorithm gets a fresh random complete message. The script computes its
 digest independently with Python `hashlib`, invokes the frontend partition
 helper, and stops if the circuit digest differs.
+
+The default cryptographic profile is `--vole-profile s` (FAEST small). Use
+`--vole-profile f` for the corresponding fast parameter set. This is separate
+from `--profile daa|all-secret`, which selects only the benchmark input layout.
 
 ## All-secret profile
 

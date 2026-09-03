@@ -8,7 +8,6 @@
 #include "circuits/sha256/witness.hpp"
 #include "circuits/sha2/sha384_circuit.hpp"
 #include "circuits/sha2/sha512_circuit.hpp"
-#include "circuits/aes/aes128_circuit.hpp"
 #include "circuits/aes/aes128_faest_circuit.hpp"
 
 #include <openssl/evp.h>
@@ -191,24 +190,27 @@ void usage() {
          "[--input-layout-bits SPEC]\n"
       << "  vole-sha256 sha512-partition-input --message-hex HEX "
          "--input-layout-bits SPEC\n"
-      << "  vole-sha256 export-aes128-circuit --circuit FILE\n"
-      << "  vole-sha256 export-aes128-faest-relation --relation FILE\n"
+      << "  vole-sha256 export-aes128-faest-relation --relation FILE [--profile s|f]\n"
       << "  vole-sha256 json-to-vbc --json FILE --circuit FILE\n"
-      << "  vole-sha256 circuit-inspect --circuit FILE [--security 128|192|256]\n"
+      << "  vole-sha256 circuit-inspect --circuit FILE [--security 128|192|256] "
+         "[--profile s|f]\n"
       << "  vole-sha256 circuit-prove --circuit FILE --private-input-hex HEX "
          "[--public-input-hex HEX] --expected-output-hex HEX --proof FILE [--context TEXT] "
-         "[--security 128|192|256]\n"
+         "[--security 128|192|256] [--profile s|f]\n"
       << "  vole-sha256 circuit-verify --circuit FILE [--public-input-hex HEX] "
-         "--expected-output-hex HEX --proof FILE [--context TEXT] [--security 128|192|256]\n"
+         "--expected-output-hex HEX --proof FILE [--context TEXT] [--security 128|192|256] "
+         "[--profile s|f]\n"
       << "  vole-sha256 circuit-benchmark --circuit FILE --private-input-hex HEX "
          "[--public-input-hex HEX] --expected-output-hex HEX [--context TEXT] "
-         "[--iterations N] [--security 128|192|256]\n"
+         "[--iterations N] [--security 128|192|256] [--profile s|f]\n"
       << "  vole-sha256 aes128-faest-prove --relation FILE --private-input-hex HEX "
-         "--public-input-hex HEX --expected-output-hex HEX --proof FILE [--context TEXT]\n"
+         "--public-input-hex HEX --expected-output-hex HEX --proof FILE [--context TEXT] "
+         "[--profile s|f]\n"
       << "  vole-sha256 aes128-faest-verify --relation FILE --public-input-hex HEX "
-         "--expected-output-hex HEX --proof FILE [--context TEXT]\n"
+         "--expected-output-hex HEX --proof FILE [--context TEXT] [--profile s|f]\n"
       << "  vole-sha256 aes128-faest-benchmark --relation FILE --private-input-hex HEX "
-         "--public-input-hex HEX --expected-output-hex HEX [--context TEXT] [--iterations N]\n";
+         "--public-input-hex HEX --expected-output-hex HEX [--context TEXT] [--iterations N] "
+         "[--profile s|f]\n";
 }
 
 int command_json_to_vbc(const std::map<std::string, std::string>& opts) {
@@ -239,6 +241,14 @@ vole_backend::SecurityLevel generic_security(
   return found == opts.end()
              ? vole_backend::SecurityLevel::Bits128
              : vole_backend::parse_security_level(found->second);
+}
+
+vole_backend::VoleProfile vole_profile(
+    const std::map<std::string, std::string>& opts) {
+  const auto found = opts.find("--profile");
+  return found == opts.end()
+             ? vole_backend::VoleProfile::Small
+             : vole_backend::parse_vole_profile(found->second);
 }
 
 faest::sha256_circuit::InputVisibilityLayout sha256_input_visibility(
@@ -377,21 +387,6 @@ int command_sha512_family_partition_input(
   return 0;
 }
 
-int command_export_aes128_circuit(const std::map<std::string, std::string>& opts) {
-  const vole_circuits::aes::Aes128Circuit frontend;
-  const auto& circuit = frontend.binary_circuit();
-  const auto encoded = vole_backend::serialize_vbc(circuit);
-  write_file(required(opts, "--circuit"), encoded);
-  const auto stats = circuit.statistics();
-  std::cout << "circuit_bytes=" << encoded.size() << '\n'
-            << "circuit_hash=" << to_hex(vole_backend::circuit_hash(encoded)) << '\n'
-            << "private_input_bits=" << stats.private_inputs << '\n'
-            << "public_input_bits=" << stats.public_inputs << '\n'
-            << "outputs=" << circuit.outputs().size() << '\n'
-            << "multiplication_gates=" << stats.multiplication_gates << '\n';
-  return 0;
-}
-
 vole_circuits::aes::Aes128FaestRelation load_aes128_faest_relation(
     const std::map<std::string, std::string>& opts) {
   const auto bytes = read_file(required(opts, "--relation"));
@@ -404,6 +399,7 @@ vole_circuits::aes::Aes128FaestRelation load_aes128_faest_relation(
 
 int command_export_aes128_faest_relation(const std::map<std::string, std::string>& opts) {
   const vole_circuits::aes::Aes128FaestRelation relation;
+  const auto profile = vole_profile(opts);
   const auto encoded = vole_backend::serialize_vqir(relation.ir());
   write_file(required(opts, "--relation"), encoded);
   std::cout << "relation_bytes=" << encoded.size() << '\n'
@@ -411,7 +407,9 @@ int command_export_aes128_faest_relation(const std::map<std::string, std::string
             << "private_input_bits=128\npublic_input_bits=128\noutputs=128\n"
             << "auxiliary_witness_bits=1152\nextended_witness_bits=1280\n"
             << "multiplication_constraints=200\n"
-            << "proof_bytes=" << vole_backend::serialized_proof_bytes(relation) << '\n';
+            << "profile=" << vole_backend::vole_profile_name(profile) << '\n'
+            << "proof_bytes="
+            << vole_backend::serialized_proof_bytes(relation, profile) << '\n';
   return 0;
 }
 
@@ -423,11 +421,13 @@ vole_backend::PublicStatement aes_faest_statement(
 
 int command_aes128_faest_prove(const std::map<std::string, std::string>& opts) {
   const auto relation = load_aes128_faest_relation(opts);
+  const auto profile = vole_profile(opts);
   const auto proof = vole_backend::prove(
-      relation, packed_bits(opts, "--private-input-hex", 128, true),
+      relation, profile, packed_bits(opts, "--private-input-hex", 128, true),
       aes_faest_statement(opts), context_bytes(opts), randomness(opts));
   write_file(required(opts, "--proof"), proof);
   std::cout << "relation_hash=" << to_hex(relation.id()) << '\n'
+            << "profile=" << vole_backend::vole_profile_name(profile) << '\n'
             << "proof_bytes=" << proof.size() << '\n'
             << "proof_sha256=" << to_hex(sha256(proof)) << '\n';
   return 0;
@@ -435,10 +435,12 @@ int command_aes128_faest_prove(const std::map<std::string, std::string>& opts) {
 
 int command_aes128_faest_verify(const std::map<std::string, std::string>& opts) {
   const auto relation = load_aes128_faest_relation(opts);
+  const auto profile = vole_profile(opts);
   const bool accepted = vole_backend::verify(
-      relation, aes_faest_statement(opts), context_bytes(opts),
+      relation, profile, aes_faest_statement(opts), context_bytes(opts),
       read_file(required(opts, "--proof")));
-  std::cout << (accepted ? "VALID" : "INVALID") << '\n';
+  std::cout << "profile=" << vole_backend::vole_profile_name(profile) << '\n'
+            << (accepted ? "VALID" : "INVALID") << '\n';
   return accepted ? 0 : 1;
 }
 
@@ -447,6 +449,7 @@ int command_aes128_faest_benchmark(const std::map<std::string, std::string>& opt
   const auto private_bits = packed_bits(opts, "--private-input-hex", 128, true);
   const auto statement = aes_faest_statement(opts);
   const auto context = context_bytes(opts);
+  const auto profile = vole_profile(opts);
   const auto found = opts.find("--iterations");
   const auto iterations = found == opts.end() ? 10UL : std::stoul(found->second);
   if (iterations == 0) throw std::invalid_argument("--iterations must be positive");
@@ -456,10 +459,12 @@ int command_aes128_faest_benchmark(const std::map<std::string, std::string>& opt
     vole_backend::ProverRandomness rho{};
     if (RAND_bytes(rho.data(), rho.size()) != 1) throw std::runtime_error("RAND_bytes failed");
     const auto ps = std::chrono::steady_clock::now();
-    const auto proof = vole_backend::prove(relation, private_bits, statement, context, rho);
+    const auto proof = vole_backend::prove(relation, profile, private_bits,
+                                           statement, context, rho);
     const auto pe = std::chrono::steady_clock::now();
     const auto vs = std::chrono::steady_clock::now();
-    const bool accepted = vole_backend::verify(relation, statement, context, proof);
+    const bool accepted =
+        vole_backend::verify(relation, profile, statement, context, proof);
     const auto ve = std::chrono::steady_clock::now();
     if (!accepted) throw std::runtime_error("benchmark proof did not verify");
     prove_samples.push_back(millis(pe - ps)); verify_samples.push_back(millis(ve - vs));
@@ -473,6 +478,7 @@ int command_aes128_faest_benchmark(const std::map<std::string, std::string>& opt
   };
   std::cout << "iterations=" << iterations << '\n'
             << "relation_hash=" << to_hex(relation.id()) << '\n'
+            << "profile=" << vole_backend::vole_profile_name(profile) << '\n'
             << "private_input_bits=128\npublic_input_bits=128\noutputs=128\n"
             << "auxiliary_witness_bits=1152\nextended_witness_bits=1280\n"
             << "multiplication_constraints=200\nproof_bytes=" << proof_bytes << '\n';
@@ -485,6 +491,8 @@ int command_circuit_inspect(const std::map<std::string, std::string>& opts) {
   const auto circuit = vole_backend::deserialize_vbc(encoded);
   const auto stats = circuit.statistics();
   const auto security = generic_security(opts);
+  const auto profile = vole_profile(opts);
+  const vole_backend::PreparedBinaryCircuit prepared(circuit);
   std::cout << "circuit_bytes=" << encoded.size() << '\n'
             << "circuit_hash=" << to_hex(vole_backend::circuit_hash(encoded)) << '\n'
             << "nodes=" << stats.total_nodes << '\n'
@@ -494,7 +502,10 @@ int command_circuit_inspect(const std::map<std::string, std::string>& opts) {
             << "xor_gates=" << stats.xor_gates << '\n'
             << "multiplication_gates=" << stats.multiplication_gates << '\n'
             << "security_bits=" << vole_backend::security_level_name(security) << '\n'
-            << "proof_bytes=" << vole_backend::serialized_proof_bytes(circuit, security) << '\n';
+            << "profile=" << vole_backend::vole_profile_name(profile) << '\n'
+            << "proof_bytes="
+            << vole_backend::serialized_proof_bytes(prepared, security, profile)
+            << '\n';
   return 0;
 }
 
@@ -512,11 +523,14 @@ int command_circuit_prove(const std::map<std::string, std::string>& opts) {
   const auto private_bits = packed_bits(opts, "--private-input-hex",
                                         prepared.statistics().private_inputs, true);
   const auto security = generic_security(opts);
-  const auto proof = vole_backend::prove(prepared, security, private_bits, statement,
+  const auto profile = vole_profile(opts);
+  const auto proof = vole_backend::prove(prepared, security, profile,
+                                         private_bits, statement,
                                          context_bytes(opts), randomness(opts));
   write_file(required(opts, "--proof"), proof);
   std::cout << "circuit_hash=" << to_hex(prepared.canonical_hash()) << '\n'
             << "security_bits=" << vole_backend::security_level_name(security) << '\n'
+            << "profile=" << vole_backend::vole_profile_name(profile) << '\n'
             << "proof_bytes=" << proof.size() << '\n'
             << "proof_sha256=" << to_hex(sha256(proof)) << '\n';
   return 0;
@@ -526,10 +540,12 @@ int command_circuit_verify(const std::map<std::string, std::string>& opts) {
   const auto circuit = load_circuit(opts);
   const vole_backend::PreparedBinaryCircuit prepared(circuit);
   const auto security = generic_security(opts);
-  const auto accepted = vole_backend::verify(prepared, security,
+  const auto profile = vole_profile(opts);
+  const auto accepted = vole_backend::verify(prepared, security, profile,
                                              generic_statement(circuit, opts), context_bytes(opts),
                                              read_file(required(opts, "--proof")));
   std::cout << "security_bits=" << vole_backend::security_level_name(security) << '\n'
+            << "profile=" << vole_backend::vole_profile_name(profile) << '\n'
             << (accepted ? "VALID" : "INVALID") << '\n';
   return accepted ? 0 : 1;
 }
@@ -544,6 +560,7 @@ int command_circuit_benchmark(const std::map<std::string, std::string>& opts) {
   const auto private_bits = packed_bits(opts, "--private-input-hex", stats.private_inputs, true);
   const auto context = context_bytes(opts);
   const auto security = generic_security(opts);
+  const auto profile = vole_profile(opts);
   const auto found = opts.find("--iterations");
   const auto iterations = found == opts.end() ? 10UL : std::stoul(found->second);
   if (iterations == 0) throw std::invalid_argument("--iterations must be positive");
@@ -560,10 +577,13 @@ int command_circuit_benchmark(const std::map<std::string, std::string>& opts) {
       throw std::runtime_error("OpenSSL RAND_bytes failed");
 
     const auto prove_start = std::chrono::steady_clock::now();
-    const auto proof = vole_backend::prove(prepared, security, private_bits, statement, context, rho);
+    const auto proof = vole_backend::prove(prepared, security, profile,
+                                           private_bits, statement, context,
+                                           rho);
     const auto prove_end = std::chrono::steady_clock::now();
     const auto verify_start = std::chrono::steady_clock::now();
-    const bool accepted = vole_backend::verify(prepared, security, statement, context, proof);
+    const bool accepted = vole_backend::verify(
+        prepared, security, profile, statement, context, proof);
     const auto verify_end = std::chrono::steady_clock::now();
     if (!accepted) throw std::runtime_error("benchmark proof did not verify");
 
@@ -586,6 +606,7 @@ int command_circuit_benchmark(const std::map<std::string, std::string>& opts) {
   std::cout << "iterations=" << iterations << '\n'
             << "circuit_hash=" << to_hex(prepared.canonical_hash()) << '\n'
             << "security_bits=" << vole_backend::security_level_name(security) << '\n'
+            << "profile=" << vole_backend::vole_profile_name(profile) << '\n'
             << "private_input_bits=" << stats.private_inputs << '\n'
             << "public_input_bits=" << stats.public_inputs << '\n'
             << "outputs=" << circuit.outputs().size() << '\n'
@@ -780,7 +801,6 @@ int main(int argc, char** argv) {
     if (command == "sha512-partition-input")
       return command_sha512_family_partition_input<
           vole_circuits::sha2::Sha512Circuit>(opts, "sha512");
-    if (command == "export-aes128-circuit") return command_export_aes128_circuit(opts);
     if (command == "export-aes128-faest-relation") return command_export_aes128_faest_relation(opts);
     if (command == "json-to-vbc") return command_json_to_vbc(opts);
     if (command == "circuit-inspect") return command_circuit_inspect(opts);
