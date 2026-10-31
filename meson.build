@@ -50,6 +50,7 @@ backend_sources = files(
   'backend/vole/bit_matrix_transpose.cpp',
   'backend/generic_quicksilver.cpp',
   'backend/generic_nizk.cpp',
+  'backend/mixed_quadratic.cpp',
   'backend/vole/faest_vole.cpp',
   'backend/vole/quicksilver.cpp',
 )
@@ -70,6 +71,7 @@ sha2_64_frontend_sources = files(
 
 aes_frontend_sources = files(
   'circuits/aes/aes128_faest_circuit.cpp',
+  'circuits/shake/shake256_circuit.cpp',
 )
 
 project_includes = include_directories('.', 'backend', 'backend/vole', 'circuits/sha2/sha256')
@@ -94,6 +96,8 @@ tests = executable(
     'tests/binary_circuit.cpp',
     'tests/bit_matrix_transpose.cpp',
     'tests/aes_circuit.cpp',
+    'tests/shake256_circuit.cpp',
+    'tests/mixed_quadratic.cpp',
     'tests/main.cpp',
     'tests/faest_integration.cpp',
     'tests/fields.cpp',
@@ -118,3 +122,5 @@ executable(
 )
 
 test('VOLEith', tests, timeout: 180)
+
+executable('vole-shake256', 'circuits/shake/benchmark.cpp', dependencies: [vole_sha256_dep, openssl], include_directories: faest_includes)

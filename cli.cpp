@@ -1,3 +1,4 @@
+#include "circuits/shake/shake256_circuit.hpp"
 /* SPDX-License-Identifier: MIT */
 
 #include "backend/circuit_format.hpp"
@@ -170,6 +171,7 @@ long peak_rss_kib() {
 }
 
 void usage() {
+  std::cout << "  vole-sha256 export-shake256-circuit --input-bits N --output-bits L --circuit FILE\n";
   std::cerr
       << "Usage:\n"
       << "  vole-sha256 prove --message-hex HEX --proof FILE [--context TEXT] "
@@ -483,6 +485,24 @@ int command_aes128_faest_benchmark(const std::map<std::string, std::string>& opt
             << "auxiliary_witness_bits=1152\nextended_witness_bits=1280\n"
             << "multiplication_constraints=200\nproof_bytes=" << proof_bytes << '\n';
   report("prove", prove_samples); report("verify", verify_samples);
+  return 0;
+}
+
+int command_export_shake256(const std::map<std::string,std::string>& opts) {
+  const auto found=opts.find("--input-bits");
+  const auto input_bits=found==opts.end() ? 384UL : std::stoul(found->second);
+  const auto output_bits=std::stoul(required(opts,"--output-bits"));
+  const auto circuit=vole_circuits::shake::make_shake256(input_bits,output_bits);
+  write_file(required(opts,"--circuit"),vole_backend::serialize_vbc(circuit));
+  const auto stats=circuit.statistics();
+  const auto layout=vole_backend::witness_layout(circuit);
+  std::cout << "input_bits=" << input_bits << '\n'
+            << "output_bits=" << output_bits << '\n'
+            << "sha_permutations=1\n"
+            << "and_gates=" << stats.multiplication_gates << '\n'
+            << "xor_gates=" << stats.xor_gates << '\n'
+            << "witness_bits_logical=" << layout.logical_bits << '\n'
+            << "witness_bits_vole=" << layout.vole_bits << '\n';
   return 0;
 }
 
@@ -810,6 +830,7 @@ int main(int argc, char** argv) {
     if (command == "aes128-faest-prove") return command_aes128_faest_prove(opts);
     if (command == "aes128-faest-verify") return command_aes128_faest_verify(opts);
     if (command == "aes128-faest-benchmark") return command_aes128_faest_benchmark(opts);
+    if (command == "export-shake256-circuit") return command_export_shake256(opts);
     usage();
     return 2;
   } catch (const std::exception& error) {

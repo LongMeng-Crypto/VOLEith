@@ -6,6 +6,7 @@ small:
 
 - SHA-256, SHA-384, and SHA-512 Boolean circuits, with arbitrary bit ranges
   assigned to either the private witness or the public statement;
+- SHAKE256 Boolean circuits with arbitrary single-rate-block XOF outputs;
 - one optimized AES-128 relation using the FAEST GF(2^8) construction with
   200 quadratic constraints.
 
@@ -90,6 +91,22 @@ scripts/benchmark_sha2.py --iterations 10 --vole-profile f
 
 Its `--profile daa|all-secret` option selects the message visibility workload;
 `--vole-profile s|f` selects the cryptographic VOLE profile.
+
+## SHAKE256 proofs
+
+The SHAKE256 Boolean frontend supports one padded absorb block (0..1082 secret
+input bits) and an arbitrary 1..1088-bit public XOF output. It supports the
+same 128/192/256-bit security levels and s/f profiles as SHA-2.
+
+```sh
+build-release/vole-shake256 --input-bits 384 --output-bits 360 \
+  --security 128 --profile s --iterations 20
+python3 scripts/benchmark_shake256.py --iterations 20
+```
+
+See [SHAKE256 circuit and CLI](doc/SHAKE256_BINARY_CIRCUIT.md). The reusable
+[mixed quadratic relation](doc/MIXED_QUADRATIC_RELATION.md) also supports
+128-bit proofs combining authenticated Boolean wires with direct field equations.
 
 ## AES-128 proof
 
