@@ -1,9 +1,9 @@
 # Authenticated Boolean and extension-field quadratic relations
 
 MixedQuadraticRelation adds a relation frontend to the existing 128s/128f
-QuicksilverRelation interface. It uses the existing VQRZK v3 proof envelope,
-transcript, challenges, VOLE layout and universal hashing. It does not change
-the existing AES relation, Boolean circuit protocol, or their proof formats.
+QuicksilverRelation interface. It uses the corrected VQRZK v4 proof envelope,
+transcript, challenges, VOLE layout and universal hashing. The AES arithmetic is unchanged; the Boolean and mixed adapters use the
+corrected encoding described in `SOUNDNESS_FIX_V1.md`.
 
 All witness inputs remain authenticated bits. A BinaryCircuit allocates its
 private input bits and AND-output bits exactly as before. Its listed output
@@ -28,8 +28,10 @@ A1 = sum_j c_j (L_j T_Rj + R_j T_Lj) + T_H
 
 The verifier accumulates E = sum_j c_j Q_Lj Q_Rj + delta*Q_H. Expanding gives
 E = A0 + delta*A1 + delta^2*C(x). This is the same degree-two authenticated
-polynomial identity used for Boolean AND checks, fed into the existing
-zk_hash_128_3 / zk_hash_128 accumulator and masking/finalization. Transport
+polynomial identity used for Boolean AND checks. Before the three-coefficient
+FAEST envelope, multiply it by X: the prover hashes (0,A0,A1), and the verifier
+hashes Delta*E. The constraint residual is now the omitted degree-3 coefficient
+and cannot be absorbed into the transmitted a2. The masks stay degree two. Transport
 padding is constrained to zero. Squares of packed subfield values must be
 expressed linearly in their authenticated bits; squaring tags alone would not
 implement that authenticated linear map.
@@ -48,3 +50,5 @@ its invalid quadratic relation must fail actual verifier authentication checks.
 Weighted products, malformed forms, relation bindings, and both profiles are
 covered. These implementation checks and the algebra above are research
 validation, not an independent cryptographic security audit.
+
+The mixed relation-ID domain is `VOLEith-MixedQuadratic-v2-GF128-0x87`.

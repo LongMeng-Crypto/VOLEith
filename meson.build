@@ -124,3 +124,9 @@ executable(
 test('VOLEith', tests, timeout: 180)
 
 executable('vole-shake256', 'circuits/shake/benchmark.cpp', dependencies: [vole_sha256_dep, openssl], include_directories: faest_includes)
+
+# Malicious-prover regressions independent of honest input validation.
+soundness_tests = executable('vole_soundness_tests', 'tests/soundness_regression.cpp',
+  dependencies: [vole_sha256_dep], include_directories: faest_includes,
+  cpp_args: ['-DVOLE_SOUNDNESS_FRONTENDS'] + ['-DVOLE_SOUNDNESS_DATA_DIR="' + meson.current_source_dir() + '/tests/data/soundness-v3"'])
+test('VOLE constraint soundness', soundness_tests, timeout: 180)

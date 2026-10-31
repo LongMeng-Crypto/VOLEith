@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "shake256_circuit.hpp"
+#include "backend/constraint_encoding.hpp"
 #include "backend/generic_nizk.hpp"
 #include "backend/vole/faest_vole.hpp"
 #include <openssl/rand.h>
@@ -50,6 +51,7 @@ int main(int argc,char**argv){try{
   const auto vole=vole_layout(layout.vole_bits,security,profile);
   struct rusage usage{};getrusage(RUSAGE_SELF,&usage);
   std::ostringstream out;out<<std::setprecision(10)<<"{\n  \"scheme\":\"SHAKE256\",\n";
+  out<<"  \"baseline_version\":\"v1\",\n  \"proof_format\":\"VBCZK-v4\",\n  \"constraint_degree\":2,\n  \"authentication_check_degree\":3,\n";
   auto n=[&](std::string k,auto v){out<<"  \""<<k<<"\":"<<v<<",\n";};
   n("input_bits",input_bits);n("output_bits",output_bits);n("security_bits",level);
   out<<"  \"profile\":\""<<profile_name<<"\",\n";n("iterations",iterations);n("sha_permutations",1);

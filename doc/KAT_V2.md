@@ -1,3 +1,5 @@
+> Corrected constraint encoding: see [the v1 fix](SOUNDNESS_FIX_V1.md). Pre-fix Boolean proof timings/fingerprints are historical and do not establish soundness. Rebuild and regenerate proofs; old proof formats are rejected.
+
 # VOLE-SHA256 generic proof KAT v2
 
 ```text

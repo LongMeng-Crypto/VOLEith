@@ -1,3 +1,5 @@
+> Corrected constraint encoding: see [the v1 fix](SOUNDNESS_FIX_V1.md). Pre-fix Boolean proof timings/fingerprints are historical and do not establish soundness. Rebuild and regenerate proofs; old proof formats are rejected.
+
 # VOLEith benchmark reference
 
 The numbers below were measured on the development machine with a Meson

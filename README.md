@@ -1,3 +1,5 @@
+> Corrected constraint encoding: see [the v1 fix](doc/SOUNDNESS_FIX_V1.md). Pre-fix Boolean proof timings/fingerprints are historical and do not establish soundness. Rebuild and regenerate proofs; old proof formats are rejected.
+
 # VOLEith
 
 VOLEith is the canonical generic VOLE-in-the-head/QuickSilver backend used by
@@ -26,10 +28,10 @@ The AES relation proves AES-128 and therefore supports the 128s and 128f
 profiles. It does not lower AES into tens of thousands of Boolean AND gates;
 the witness and constraints use FAEST's native extension-field traversal.
 
-New generic-circuit proofs use the `VBCZK` v3 format. Their security level and
+New generic-circuit proofs use the `VBCZK` v4 format. Their security level and
 S/F profile are bound into the header, circuit identifier, Fiat--Shamir
 transcript, VOLE layout, and verifier API. AES-relation proofs use the separate
-`VQRZK` v3 format; AES has a fixed 128-bit relation identifier, while its S/F
+`VQRZK` v4 format; AES has a fixed 128-bit relation identifier, while its S/F
 profile is bound into the header, transcript, VOLE layout, and verifier API.
 A proof is rejected under the wrong profile. APIs without an explicit profile
 remain only as compatibility wrappers and select `small`.
@@ -42,7 +44,7 @@ meson compile -C build-release
 meson test -C build-release --print-errorlogs
 ```
 
-The tests include deterministic v3 proof KATs for all six generic
+The tests include deterministic v4 proof KATs for all six generic
 security/profile combinations and both AES-128 profiles, plus end-to-end S/F
 tests for the SHA-2 frontends. They also compare
 the PCLMUL/Karatsuba field arithmetic, batched AES-CTR PRG, AVX2 transpose,

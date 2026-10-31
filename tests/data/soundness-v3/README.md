@@ -1,0 +1,1 @@
+Historical public test vectors from the vulnerable v3 backend. Each claims output 0 for a constant-1 circuit with one unused zero private bit. The malicious prover folded residual 1 into a2; the old unmodified verifier accepted all six. These contain no private application data. Both original and header-relabelled copies must be rejected.

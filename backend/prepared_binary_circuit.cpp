@@ -14,7 +14,7 @@ extern "C" {
 namespace vole_backend {
 namespace {
 
-constexpr char circuit_id_domain[] = "VOLE-BINARY-CIRCUIT-ID-v3";
+constexpr char circuit_id_domain[] = "VOLE-BINARY-CIRCUIT-ID-v4";
 
 std::size_t security_index(SecurityLevel security, VoleProfile profile) {
   std::size_t profile_offset = 0;

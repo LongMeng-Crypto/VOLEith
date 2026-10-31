@@ -33,8 +33,10 @@ std::vector<F> rows(const std::vector<std::uint8_t*>& cols,std::size_t count) {
   return out;
 }
 void update(zk_hash_128_3_ctx* h,F a,F b) {
-  auto na=native(a),nb=native(b),zero=bf128_zero();
-  zk_hash_128_3_update(h,&na,&nb,&zero);
+  // The FAEST envelope transmits degree 1 and 2. Raise the quadratic
+  // constraint by X so its residual is the omitted degree-3 coefficient.
+  auto na=native(a),nb=native(b);
+  zk_hash_128_3_raise_and_update(h,&na,&nb);
 }
 void update(zk_hash_128_ctx* h,F a) { auto na=native(a); zk_hash_128_update(h,&na); }
 template<bool Prover> std::vector<Auth> linear_wires(
@@ -98,7 +100,7 @@ MixedQuadraticRelation::MixedQuadraticRelation(BinaryCircuit c,std::vector<F> co
   EVP_DigestInit_ex(h,EVP_sha256(),nullptr);
   auto bytes=[&](auto* p,std::size_t n){ if(EVP_DigestUpdate(h,p,n)!=1) throw std::runtime_error("relation hash"); };
   auto u64=[&](std::uint64_t x){ std::uint8_t b[8]; for(unsigned i=0;i<8;++i)b[i]=x>>(8*i); bytes(b,8); };
-  constexpr char domain[]="VOLEith-MixedQuadratic-v1-GF128-0x87";
+  constexpr char domain[]="VOLEith-MixedQuadratic-v2-GF128-0x87";
   bytes(domain,sizeof(domain)-1); u64(binding.size()); bytes(binding.data(),binding.size());
   const auto bh=circuit_hash(circuit_); bytes(bh.data(),bh.size());
   u64(constants_.size()); for(auto f:constants_) {u64(f.lo);u64(f.hi);}
@@ -231,6 +233,9 @@ std::array<std::uint8_t,lambda_bytes> MixedQuadraticRelation::verify_constraints
   std::vector<bf128_t> extra(256);for(unsigned i=0;i<256;++i)extra[i]=native(keys[layout.vole_bits+i]);
   bf128_t q0,q1;bf128_sum_poly(&q0,extra.data());bf128_sum_poly(&q1,extra.data()+128);
   auto qstar=plain(q0)+field_multiply(plain(q1),delta);auto nq=native(qstar);
+  // Field-linearity lets us raise the complete constraint hash once.
+  auto ndelta=native(delta);
+  bf128_mul_inplace(&hasher.h0,&ndelta);bf128_mul_inplace(&hasher.h1,&ndelta);
   std::array<std::uint8_t,16> out{};zk_hash_128_finalize(out.data(),&hasher,&nq);
   const auto a0=load(out.data())+field_multiply(load(proof.a1.data()),delta)+
       field_multiply(load(proof.a2.data()),field_multiply(delta,delta));

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 
 #include "generic_nizk.hpp"
+#include "constraint_encoding.hpp"
 #include "quadratic_relation.hpp"
 
 #include "backend_witness.hpp"
@@ -22,8 +23,8 @@ namespace vole_backend {
 namespace {
 
 
-constexpr std::array<std::uint8_t, 8> proof_magic = {'V', 'B', 'C', 'Z', 'K', 1, 0, 0};
-constexpr char domain[] = "VOLE-BINARY-CIRCUIT-NIZK-v1";
+constexpr std::array<std::uint8_t, 8> proof_magic = {'V', 'Q', 'R', 'Z', 'K', constraint_encoding_version, 0, 0};
+constexpr char domain[] = "VOLE-RELATION-NIZK-v4";
 constexpr std::size_t utilde_bytes = lambda_bytes + 2;
 constexpr std::size_t challenge_1_bytes = 5 * lambda_bytes + 8;
 
@@ -37,47 +38,6 @@ struct Fields {
   std::array<std::uint8_t, lambda_bytes> challenge_3{};
   std::array<std::uint8_t, 16> iv_pre{};
   std::uint32_t counter = 0;
-};
-
-// Compatibility adapter for verification of generic binary-circuit proofs
-// emitted before the runtime security-level API introduced proof format v2.
-class LegacyBinaryRelation final : public QuicksilverRelation {
-public:
-  explicit LegacyBinaryRelation(const BinaryCircuit& circuit) : circuit_(circuit) {}
-  std::array<std::uint8_t, 32> id() const override { return circuit_hash(circuit_); }
-  std::size_t private_input_bits() const override { return circuit_.statistics().private_inputs; }
-  std::size_t public_input_bits() const override { return circuit_.statistics().public_inputs; }
-  std::size_t output_bits() const override { return circuit_.outputs().size(); }
-  std::size_t witness_bits() const override { return witness_layout(circuit_).vole_bits; }
-  std::vector<std::uint8_t> build_witness(
-      std::span<const std::uint8_t> private_inputs,
-      const PublicStatement& statement) const override {
-    const auto evaluation = circuit_.evaluate(private_inputs, statement.public_inputs);
-    if (evaluation.outputs != statement.expected_outputs)
-      throw std::invalid_argument("private input does not satisfy outputs");
-    return vole_backend::build_witness(circuit_, private_inputs, statement.public_inputs);
-  }
-  QuicksilverProof prove_constraints(
-      std::span<const std::uint8_t> witness, const PublicStatement& statement,
-      const std::vector<std::uint8_t*>& v, const std::uint8_t* u_extra,
-      const QuicksilverChallenge& challenge) const override {
-    const PackedWitness packed(witness.begin(), witness.end());
-    return quicksilver_prove(circuit_, packed, statement.public_inputs,
-                             statement.expected_outputs, v, u_extra, challenge);
-  }
-  std::array<std::uint8_t, lambda_bytes> verify_constraints(
-      std::span<const std::uint8_t> d, const PublicStatement& statement,
-      const std::vector<std::uint8_t*>& q,
-      const std::array<std::uint8_t, lambda_bytes>& delta,
-      const QuicksilverChallenge& challenge,
-      const QuicksilverProof& proof) const override {
-    const PackedWitness packed(d.begin(), d.end());
-    return quicksilver_verify(circuit_, packed, statement.public_inputs,
-                              statement.expected_outputs, q, delta, challenge, proof);
-  }
-
-private:
-  const BinaryCircuit& circuit_;
 };
 
 bool valid_statement(const QuicksilverRelation& relation, const PublicStatement& statement) {
@@ -311,7 +271,7 @@ bool verify(const QuicksilverRelation& relation, const PublicStatement& statemen
 namespace profiled_relation_nizk {
 namespace {
 
-constexpr char relation_domain[] = "VOLE-QUADRATIC-RELATION-NIZK-v3";
+constexpr char relation_domain[] = "VOLE-QUADRATIC-RELATION-NIZK-v4";
 
 struct ProfiledFields {
   std::vector<std::uint8_t> corrections;
@@ -326,7 +286,7 @@ struct ProfiledFields {
 };
 
 std::array<std::uint8_t, 8> relation_magic(VoleProfile profile) {
-  return {'V', 'Q', 'R', 'Z', 'K', 3,
+  return {'V', 'Q', 'R', 'Z', 'K', constraint_encoding_version,
           security_level_code(SecurityLevel::Bits128),
           vole_profile_code(profile)};
 }
@@ -608,7 +568,7 @@ bool verify(const QuicksilverRelation& relation, VoleProfile profile,
 namespace parameterized_nizk {
 namespace {
 
-constexpr char parameterized_domain[] = "VOLE-BINARY-CIRCUIT-NIZK-v3";
+constexpr char parameterized_domain[] = "VOLE-BINARY-CIRCUIT-NIZK-v4";
 
 struct Fields {
   std::vector<std::uint8_t> corrections;
@@ -624,7 +584,7 @@ struct Fields {
 
 std::array<std::uint8_t, 8> magic(SecurityLevel security,
                                   VoleProfile profile) {
-  return {'V', 'B', 'C', 'Z', 'K', 3, security_level_code(security),
+  return {'V', 'B', 'C', 'Z', 'K', constraint_encoding_version, security_level_code(security),
           vole_profile_code(profile)};
 }
 
@@ -1059,12 +1019,7 @@ bool verify(const PreparedBinaryCircuit& circuit, SecurityLevel security,
             const PublicStatement& statement,
             std::span<const std::uint8_t> context,
             std::span<const std::uint8_t> proof) {
-  if (verify(circuit, security, VoleProfile::Small, statement, context, proof))
-    return true;
-  if (security != SecurityLevel::Bits128) return false;
-  const LegacyBinaryRelation legacy(circuit.circuit());
-  return verify(static_cast<const QuicksilverRelation&>(legacy), statement,
-                context, proof);
+  return verify(circuit, security, VoleProfile::Small, statement, context, proof);
 }
 
 bool verify(const PreparedBinaryCircuit& circuit, SecurityLevel security,

@@ -24,13 +24,13 @@ challenge_3          = lambda/8
 BAVC opening         = (3*tau + T_open) * lambda/8
 ```
 
-## v3 binding
+## v4 binding
 
 The generic circuit proof header is:
 
 ```text
-56 42 43 5a 4b 03 LL PP
- V  B  C  Z  K v3 level profile
+56 42 43 5a 4b 04 LL PP
+ V  B  C  Z  K v4 level profile
 ```
 
 `LL` is 1, 2, or 3 for 128, 192, or 256 bits. `PP` is 1 for small
@@ -39,7 +39,7 @@ Fiat--Shamir transcript and select the VOLE layout used by the prover and
 verifier. Changing either byte, or invoking verification with a different
 level/profile pair, fails.
 
-The optimized AES relation has its own `VQRZK` v3 header to separate its
+The optimized AES relation has its own `VQRZK` v4 header to separate its
 native GF(2^8) relation from the generic Boolean-circuit format. It supports
 AES-128s and AES-128f only.
 

@@ -104,16 +104,16 @@ void prover_constraints(const BinaryCircuit& circuit, const UnpackedWitness& wit
       auto degree1 = wires[i].tag;
       if (wires[node.lhs].value) bf128_add_inplace(&degree1, &wires[node.rhs].tag);
       if (wires[node.rhs].value) bf128_add_inplace(&degree1, &wires[node.lhs].tag);
-      zk_hash_128_3_update(hasher, &degree0, &degree1, &zero);
+      zk_hash_128_3_raise_and_update(hasher, &degree0, &degree1);
       break;
     }
     }
   }
   for (std::size_t bit = layout.logical_bits; bit != layout.vole_bits; ++bit) {
-    zk_hash_128_3_update(hasher, &zero, &tags[bit], &zero);
+    zk_hash_128_3_update(hasher, &zero, &zero, &tags[bit]);
   }
   for (const auto output : circuit.outputs()) {
-    zk_hash_128_3_update(hasher, &zero, &wires[output].tag, &zero);
+    zk_hash_128_3_update(hasher, &zero, &zero, &wires[output].tag);
   }
 }
 
@@ -205,6 +205,11 @@ std::array<std::uint8_t, lambda_bytes> quicksilver_verify(
   zk_hash_128_init(&hasher, challenge_2.data());
   verifier_constraints(circuit, public_inputs, expected_outputs, keys, delta, delta_squared, &hasher);
   std::array<std::uint8_t, lambda_bytes> q_tilde{};
+  // Lift every degree-2 constraint by X before the degree-3 FAEST check.
+  // The universal hash is field-linear, so two multiplications after
+  // aggregation replace one extra multiplication at every constraint.
+  bf128_mul_inplace(&hasher.h0, &delta);
+  bf128_mul_inplace(&hasher.h1, &delta);
   zk_hash_128_finalize(q_tilde.data(), &hasher, &q_star);
   bf128_t result, a2;
   bf128_load(&result, proof.a1.data());
@@ -339,15 +344,15 @@ void parameterized_prover_constraints(
       Ops::add_inplace(&degree1, &term);
       Ops::mul_bit(&term, &wires[node.lhs].tag, wires[node.rhs].value);
       Ops::add_inplace(&degree1, &term);
-      Ops::prover_update(hasher, &degree0, &degree1, &zero);
+      Ops::prover_update(hasher, &zero, &degree0, &degree1);
       break;
     }
     }
   }
   for (std::size_t bit = layout.logical_bits; bit != layout.vole_bits; ++bit)
-    Ops::prover_update(hasher, &zero, &tags[bit], &zero);
+    Ops::prover_update(hasher, &zero, &zero, &tags[bit]);
   for (const auto output : circuit.outputs())
-    Ops::prover_update(hasher, &zero, &wires[output].tag, &zero);
+    Ops::prover_update(hasher, &zero, &zero, &wires[output].tag);
 }
 
 template<class Ops>
@@ -459,6 +464,8 @@ std::vector<std::uint8_t> parameterized_quicksilver_verify_impl(
   parameterized_verifier_constraints<Ops>(circuit, public_inputs, expected_outputs,
                                            keys, delta, delta_squared, &hasher);
   std::vector<std::uint8_t> q_tilde(Ops::bytes);
+  hasher.h0 = field_multiply<Ops>(hasher.h0, delta);
+  hasher.h1 = field_multiply<Ops>(hasher.h1, delta);
   Ops::verifier_finalize(q_tilde.data(), &hasher, &q_star);
   typename Ops::Field result, a2;
   Ops::load(&result, proof.a1.data());

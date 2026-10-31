@@ -34,8 +34,9 @@ constant tag     = zero
 ```
 
 For every `z=x AND y`, the prover sends the degree-zero and degree-one
-constraint coefficients into `zk_hash_128_3_update`; the residual degree-two
-coefficient is omitted.  Public digest equalities are lifted to degree two and
+constraint coefficients into channels 1 and 2 of `zk_hash_128_3`; channel 0
+is zero. This multiplies the quadratic constraint by X, leaving its residual
+in the omitted degree-three coefficient.  Public digest equalities are lifted to degree three and
 processed by the same hasher.  Finalization uses FAEST's two extra lambda-bit
 VOLE rows and mask polynomials exactly as the AES wrapper does.
 
@@ -84,4 +85,6 @@ Q[column] = V[column] XOR challenge[column]*u.
 
 The Fiat-Shamir transcript and serialized non-interactive proof layer built on
 this adapter are documented in `NIZK_PROOF_FORMAT.md`; the full parameter table
-and generic v2 header are in `SECURITY_PARAMETERS.md`.
+and generic v4 header are in `SECURITY_PARAMETERS.md`.
+
+The verifier raises the accumulated constraint hash by Delta before finalization. See `SOUNDNESS_FIX_V1.md`.

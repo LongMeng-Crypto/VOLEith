@@ -22,8 +22,8 @@ namespace vole_sha256 {
 using namespace vole_backend;
 namespace {
 
-constexpr std::array<std::uint8_t, 8> proof_magic = {'V', 'S', 'H', '2', '5', '6', 2, 0};
-constexpr char protocol_domain[] = "VOLE-SHA256-GENERIC-NIZK-v2";
+constexpr std::array<std::uint8_t, 8> proof_magic = {'V', 'S', 'H', '2', '5', '6', 3, 0};
+constexpr char protocol_domain[] = "VOLE-SHA256-GENERIC-NIZK-v3";
 constexpr std::size_t utilde_bytes = lambda_bytes + 2;
 constexpr std::size_t challenge_1_bytes = 5 * lambda_bytes + 8;
 
